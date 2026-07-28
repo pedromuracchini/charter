@@ -1,5 +1,10 @@
+import json
+
+import pytest
+
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK
+from tollgate.errors import ConfigurationError
 from tollgate.ledger.event import LedgerEvent
 from tollgate.report.graph import delegation_graph, policy_graph
 from tollgate.report.narrative import narrative
@@ -98,3 +103,32 @@ def test_build_report_window_hours_excludes_older_events():
     report_wide = build_report([policy], [old_event], window_hours=72)
     assert report_wide.policies[0].block_count == 1
     assert report_wide.window_hours == 72
+
+
+def test_policy_graph_json_is_machine_readable():
+    payload = json.loads(policy_graph([_event()], format="json"))
+    assert payload["edges"] == [{"policy": "p1", "tool": "delete_record", "action": "block"}]
+
+
+def test_policy_graph_rejects_an_unknown_format():
+    with pytest.raises(ConfigurationError, match="unsupported graph format"):
+        policy_graph([_event()], format="svg")
+
+
+def test_delegation_graph_dot_carries_the_trust_level_and_the_tool_edge():
+    out = delegation_graph([_event()], format="dot")
+    assert "digraph delegation {" in out
+    assert '"orchestrator" -> "executor_agent" [label="trust=1"];' in out
+    assert '"executor_agent" -> "delete_record" [label="block"];' in out
+
+
+def test_delegation_graph_rejects_an_unknown_format():
+    with pytest.raises(ConfigurationError, match="unsupported graph format"):
+        delegation_graph([_event()], format="svg")
+
+
+def test_narrative_technical():
+    text = narrative([_event(), _event(event_id="evt_2", tool="read_record", decision="ALLOW")], "technical")
+    assert "2 events across 2 tools: delete_record, read_record." in text
+    assert "'BLOCK': 1" in text
+    assert "- p1: 2 decision(s)" in text

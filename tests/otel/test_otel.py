@@ -9,6 +9,12 @@ from tollgate.ledger.ledger import ActionLedger
 from tollgate.otel.config import configure_otel, otel_available, reset_otel
 from tollgate.otel.spans import evaluate_span, should_sample
 
+#: Everything below that actually inspects a span or a metric needs the SDK
+#: from the `otel` extra. Skipping says so; the `if not otel_available():
+#: return` these tests used to open with reported a pass having asserted
+#: nothing, so a bare-environment run looked fully green.
+requires_otel = pytest.mark.skipif(not otel_available(), reason="requires the `otel` extra")
+
 
 def _ctx():
     return GuardContext.build(tool_name="t", args={}, scope=ExecutionScope())
@@ -21,10 +27,8 @@ def test_unconfigured_otel_yields_no_span():
         assert span_ids is None
 
 
+@requires_otel
 def test_configured_otel_with_in_memory_exporter_emits_span():
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -44,13 +48,11 @@ def test_configured_otel_with_in_memory_exporter_emits_span():
     reset_otel()
 
 
+@requires_otel
 def test_per_call_tracer_provider_override_works_without_configure_otel():
     """A `tracer_provider` passed directly to `evaluate_span` (as
     `TollgateInterceptor.otel_tracer` does) must emit spans even if the global
     `configure_otel()` was never called."""
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -71,13 +73,11 @@ def test_per_call_tracer_provider_override_works_without_configure_otel():
     reset_otel()
 
 
+@requires_otel
 def test_allow_sampling_is_rolled_once_not_squared():
     """_record_allow rolled at allow_sample_rate, then evaluate_span rolled
     again at the same rate — the effective span rate was allow_sample_rate**2,
     and the ledger and spans disagreed about which events survived."""
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -109,12 +109,10 @@ def test_allow_sampling_is_rolled_once_not_squared():
     reset_otel()
 
 
+@requires_otel
 def test_escalate_spans_sample_at_the_block_rate_not_the_allow_rate():
     """An ESCALATE is a failure. It used to fall through to allow_sample_rate,
     so dialing allows down silently thinned approval-request spans too."""
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -181,12 +179,10 @@ def _collect(reader):
     return collected
 
 
+@requires_otel
 def test_span_carries_the_tool_name_and_marks_a_block_as_an_error():
     """Without tollgate.tool you cannot group spans by tool in a backend, and
     without a span status a BLOCK never surfaces in error views."""
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -216,10 +212,8 @@ def test_span_carries_the_tool_name_and_marks_a_block_as_an_error():
     reset_otel()
 
 
+@requires_otel
 def test_dry_run_block_is_not_marked_as_a_span_error():
-    if not otel_available():
-        return
-
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -245,12 +239,10 @@ def test_dry_run_block_is_not_marked_as_a_span_error():
     reset_otel()
 
 
+@requires_otel
 def test_escalation_metrics_are_emitted_with_the_outcome():
     """There was previously no escalation metric at all — the one decision
     that puts a human in the request path was unobservable."""
-    if not otel_available():
-        return
-
     from tollgate.core.escalation import EscalationHandler, register_handler
 
     class Approve(EscalationHandler):
@@ -287,10 +279,8 @@ def test_escalation_metrics_are_emitted_with_the_outcome():
     reset_otel()
 
 
+@requires_otel
 def test_dry_run_escalation_is_recorded_as_not_resolved():
-    if not otel_available():
-        return
-
     reader = _in_memory_metrics()
     configure_otel()
 
@@ -310,12 +300,10 @@ def test_dry_run_escalation_is_recorded_as_not_resolved():
     reset_otel()
 
 
+@requires_otel
 def test_delegation_depth_metric_is_actually_emitted():
     """record_delegation_depth() existed and was documented but no call site
     ever invoked it."""
-    if not otel_available():
-        return
-
     reader = _in_memory_metrics()
     configure_otel()
 
@@ -326,4 +314,34 @@ def test_delegation_depth_metric_is_actually_emitted():
     assert len(points) == 1
     assert points[0].attributes["agent"] == "executor"
     assert points[0].sum == 1  # one hop, not two chain entries
+    reset_otel()
+
+
+# --- sampling boundaries ---------------------------------------------------
+# `should_sample` only reads the configured rates, so these hold with or
+# without the `otel` extra installed.
+
+
+def test_an_allow_rate_of_zero_never_samples():
+    """The comparison used to be `<=`, and `random()` can return exactly 0.0 —
+    a rate the caller explicitly turned off still let the occasional draw
+    through."""
+    configure_otel(allow_sample_rate=0.0, block_sample_rate=1.0)
+    decision = GuardDecision(action=ALLOW, reason="r")
+    assert not any(should_sample(decision) for _ in range(2000))
+    reset_otel()
+
+
+def test_an_allow_rate_of_one_always_samples():
+    """`random()` never returns 1.0, so a strict `<` still samples everything."""
+    configure_otel(allow_sample_rate=1.0, block_sample_rate=1.0)
+    decision = GuardDecision(action=ALLOW, reason="r")
+    assert all(should_sample(decision) for _ in range(2000))
+    reset_otel()
+
+
+def test_a_block_rate_of_zero_never_samples():
+    configure_otel(allow_sample_rate=1.0, block_sample_rate=0.0)
+    decision = GuardDecision(action=BLOCK, reason="denied")
+    assert not any(should_sample(decision) for _ in range(2000))
     reset_otel()

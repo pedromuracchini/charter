@@ -1,11 +1,14 @@
+import argparse
+import io
 import json
 
 import pytest
 
-from tollgate.cli.main import main
+from tollgate.cli.main import _cmd_repl, _load_ledger_events, main
 from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, GuardBlocked
+from tollgate.ledger.event import LedgerEvent
 from tollgate.ledger.ledger import ActionLedger
 
 AGENT_MODULE = """
@@ -151,3 +154,232 @@ def test_export_fixtures_emits_importable_python(tmp_path, capsys):
     source = capsys.readouterr().out
     compile(source, "<generated>", "exec")  # must be valid Python
     assert "def test_" in source
+
+
+def test_export_fixtures_skips_events_recorded_with_redacted_args(capsys):
+    """Secrets are redacted at record time, so the generated test could only
+    ever replay placeholders — it is emitted skipped rather than dropped."""
+    policy = PolicySet("exported")
+    policy.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
+    TollgateInterceptor(policies=[policy], agent_id="exporter").call(
+        "login", lambda **kw: None, password="hunter2"
+    )
+    main(["export", "--format", "fixtures"])
+
+    source = capsys.readouterr().out
+    assert "@pytest.mark.skip" in source
+    compile(source, "<generated>", "exec")
+
+
+def _jsonl_event(event_id="evt_file", tool="t", decision="BLOCK", chain=()):
+    return LedgerEvent(
+        event_id=event_id,
+        ts="2026-06-03T14:32:01Z",
+        tool=tool,
+        args={},
+        policy="smoke_policy",
+        decision=decision,
+        reason="r",
+        delegation_chain=list(chain),
+    ).model_dump_json()
+
+
+def _write_ledger_file(tmp_path, *lines):
+    path = tmp_path / "ledger.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_load_ledger_events_skips_unparseable_lines(tmp_path, capsys):
+    """A sink is an append-only log a process can die partway through writing,
+    so a truncated final line must not abort the whole read."""
+    truncated = _jsonl_event(event_id="evt_bad")[:20]
+    path = _write_ledger_file(
+        tmp_path,
+        _jsonl_event(event_id="evt_good_1"),
+        "not json at all",
+        truncated,
+        _jsonl_event(event_id="evt_good_2"),
+    )
+
+    events = _load_ledger_events(path)
+
+    assert [e.event_id for e in events] == ["evt_good_1", "evt_good_2"]
+    assert "skipped 2 unparseable line(s)" in capsys.readouterr().err
+
+
+def test_load_ledger_events_is_silent_when_every_line_parses(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(), "", _jsonl_event(event_id="evt_2"))
+
+    events = _load_ledger_events(path)
+
+    assert len(events) == 2
+    assert capsys.readouterr().err == ""
+
+
+def test_load_ledger_events_merges_the_in_memory_ledger(tmp_path):
+    ActionLedger.current().record(LedgerEvent.model_validate_json(_jsonl_event(event_id="evt_mem")))
+    path = _write_ledger_file(tmp_path, _jsonl_event(event_id="evt_disk"))
+
+    assert [e.event_id for e in _load_ledger_events(path)] == ["evt_mem", "evt_disk"]
+
+
+def test_load_ledger_events_without_a_path_returns_the_in_memory_ledger():
+    ActionLedger.current().record(LedgerEvent.model_validate_json(_jsonl_event(event_id="evt_mem")))
+    assert [e.event_id for e in _load_ledger_events(None)] == ["evt_mem"]
+
+
+def test_report_with_a_ledger_file_counts_its_events(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(tool="do_thing"))
+    main(["report", "--agent", _write_agent(tmp_path), "--ledger", path, "--format", "json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    stats = {p["name"]: p for p in payload["policies"]}
+    assert "do_thing" in stats["smoke_policy"]["tools_covered"]
+
+
+def test_report_with_a_corrupt_ledger_file_still_reports(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(tool="do_thing"), "{truncated")
+    main(["report", "--agent", _write_agent(tmp_path), "--ledger", path])
+
+    captured = capsys.readouterr()
+    assert "coverage:" in captured.out
+    assert "skipped 1 unparseable line(s)" in captured.err
+
+
+def test_export_with_a_corrupt_ledger_file_still_exports(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(), "]]not json[[")
+    main(["export", "--format", "json", "--ledger", path])
+
+    captured = capsys.readouterr()
+    assert len(json.loads(captured.out)) == 1
+    assert "skipped 1 unparseable line(s)" in captured.err
+
+
+def test_report_delegation_dot_format(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(chain=("orchestrator", "executor")))
+    main(["report", "--agent", _write_agent(tmp_path), "--ledger", path, "--delegation", "--format", "dot"])
+
+    out = capsys.readouterr().out
+    assert out.startswith("digraph delegation {")
+    assert "orchestrator" in out
+
+
+def test_report_delegation_defaults_to_mermaid(tmp_path, capsys):
+    path = _write_ledger_file(tmp_path, _jsonl_event(chain=("orchestrator", "executor")))
+    main(["report", "--agent", _write_agent(tmp_path), "--ledger", path, "--delegation"])
+
+    assert "graph LR" in capsys.readouterr().out
+
+
+def test_report_no_static_coverage_is_audit_only(tmp_path, capsys):
+    main(["report", "--agent", _write_agent(tmp_path), "--no-static-coverage", "--format", "json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["covered_tools"] == []
+
+
+def test_replay_with_an_agent_re_evaluates_the_policies(tmp_path, capsys):
+    ActionLedger.current().record(
+        LedgerEvent(
+            event_id="evt_replay",
+            ts="2026-06-03T14:32:01Z",
+            tool="do_thing",
+            args={"x": 5},
+            policy="smoke_policy",
+            decision="BLOCK",
+            reason="r",
+        )
+    )
+    main(["replay", "evt_replay", "--agent", _write_agent(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert "original decision: BLOCK" in out
+    assert "[PASS] smoke_policy: x must be positive" in out
+    # x=5 now passes, so the stored BLOCK is no longer reproduced.
+    assert "changed: True" in out
+
+
+def test_loading_a_module_that_does_not_exist_exits(tmp_path):
+    """It used to fail ten frames deep inside importlib instead."""
+    with pytest.raises(SystemExit, match="no such agent module"):
+        main(["report", "--agent", str(tmp_path / "no_such_agent.py")])
+
+
+def test_loading_a_file_python_cannot_import_exits(tmp_path):
+    path = tmp_path / "agent.txt"
+    path.write_text("POLICIES = []\n")
+    with pytest.raises(SystemExit, match="could not load module"):
+        main(["report", "--agent", str(path)])
+
+
+def test_a_module_without_policies_exits_with_an_explicit_message(tmp_path):
+    path = tmp_path / "no_policies.py"
+    path.write_text("X = 1\n")
+    with pytest.raises(SystemExit, match="does not define a module-level POLICIES list"):
+        main(["report", "--agent", str(path)])
+
+
+def test_lint_exits_non_zero_on_an_error_severity_finding(tmp_path, capsys):
+    """A scoped policy with no registry silently leaves caller_role None — the
+    CI gate is the exit code, not the printed text."""
+    path = tmp_path / "scoped_agent.py"
+    path.write_text(
+        "from tollgate import AgentScopedPolicy, BLOCK\n"
+        "policy = AgentScopedPolicy(\n"
+        '    name="scoped", allowed_roles=["executor"], on_fail=BLOCK, reason="r",\n'
+        ")\n"
+        "POLICIES = [policy]\n"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        main(["lint", "--agent", str(path)])
+
+    assert excinfo.value.code == 1
+    assert "[error]" in capsys.readouterr().out
+
+
+def test_lint_of_a_module_without_policies_exits(tmp_path):
+    path = tmp_path / "no_policies_lint.py"
+    path.write_text("X = 1\n")
+    with pytest.raises(SystemExit, match="does not define a module-level POLICIES list"):
+        main(["lint", "--agent", str(path)])
+
+
+class _ScriptedInput:
+    """Feeds queued lines to `run_repl`, then raises EOFError like a closed stdin."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    def __call__(self, prompt: str) -> str:
+        if not self._lines:
+            raise EOFError
+        return self._lines.pop(0)
+
+
+def test_repl_subcommand_evaluates_a_line_and_exits_on_quit(tmp_path):
+    printed: list[str] = []
+    args = argparse.Namespace(agent=_write_agent(tmp_path))
+    _cmd_repl(
+        args,
+        input_fn=_ScriptedInput(["do_thing", '{"x": -1}', "quit"]),
+        output_fn=printed.append,
+    )
+
+    assert any("decision: BLOCK" in line for line in printed)
+
+
+def test_repl_subcommand_rejects_a_module_without_policies(tmp_path):
+    path = tmp_path / "no_policies_repl.py"
+    path.write_text("X = 1\n")
+    with pytest.raises(SystemExit, match="does not define a module-level POLICIES list"):
+        _cmd_repl(argparse.Namespace(agent=str(path)), input_fn=_ScriptedInput([]), output_fn=lambda _: None)
+
+
+def test_repl_subcommand_defaults_to_stdin_and_stdout(tmp_path, monkeypatch, capsys):
+    """`main()` passes only `args`, so the builtins must remain the defaults."""
+    monkeypatch.setattr("sys.stdin", io.StringIO('do_thing\n{"x": 1}\n'))
+    main(["repl", "--agent", _write_agent(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert "tollgate policy REPL" in out
+    assert "decision: ALLOW (no rule fired)" in out

@@ -1,5 +1,6 @@
 import asyncio
 import time
+import warnings
 
 import pytest
 
@@ -9,7 +10,7 @@ from tollgate._engine import (
     evaluate_call,
     evaluate_call_async,
 )
-from tollgate._scope import ExecutionScope, current_scope
+from tollgate._scope import ExecutionScope, current_scope, use_scope
 from tollgate.core.context import GuardContext
 from tollgate.core.escalation import (
     EscalationHandler,
@@ -18,7 +19,9 @@ from tollgate.core.escalation import (
     resolve_handler,
 )
 from tollgate.core.policy_set import PolicySet
+from tollgate.core.reversible import ReversibleAction
 from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
+from tollgate.errors import ConfigurationError, ConfigurationWarning
 from tollgate.ledger.ledger import ActionLedger
 
 
@@ -290,3 +293,202 @@ def test_enforce_mode_still_contacts_the_handler():
     )
 
     assert spy.calls == ["t"]
+
+
+def test_register_handler_rejects_a_scheme_that_is_itself_a_uri():
+    """`resolve_handler` matches on `urlsplit(target).scheme`, so registering
+    'slack://x' would never match anything."""
+    with pytest.raises(ConfigurationError, match="bare URI scheme"):
+        register_handler("slack://x", _SpyHandler())
+
+
+def test_register_handler_rejects_an_empty_or_colon_bearing_scheme():
+    with pytest.raises(ConfigurationError):
+        register_handler("", _SpyHandler())
+    with pytest.raises(ConfigurationError):
+        register_handler("slack:", _SpyHandler())
+
+
+def test_schemeless_escalate_to_on_a_policy_warns():
+    """A plain 'security-team' has an empty scheme, matches no handler, and
+    silently blocks every guarded call forever."""
+    policy = PolicySet("needs_approval")
+    with pytest.warns(ConfigurationWarning, match="no URI scheme"):
+        policy.require(
+            lambda ctx: False,
+            on_fail=ESCALATE,
+            reason="needs approval",
+            escalate_to="security-team",
+        )
+
+
+def test_schemeless_escalate_to_on_a_high_reversible_action_warns():
+    with pytest.warns(ConfigurationWarning, match="no URI scheme"):
+        ReversibleAction(
+            do_fn=lambda args: None,
+            undo_fn=None,
+            name="delete_bucket",
+            irreversibility_level="high",
+            escalate_to="security-team",
+        )
+
+
+def test_a_scheme_bearing_escalate_to_does_not_warn():
+    policy = PolicySet("needs_approval")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigurationWarning)
+        policy.require(
+            lambda ctx: False,
+            on_fail=ESCALATE,
+            reason="needs approval",
+            escalate_to="slack://security-team",
+        )
+
+
+class _ScopeCapturingHandler(EscalationHandler):
+    """Records the `ExecutionScope` visible from inside the handler."""
+
+    def __init__(self) -> None:
+        self.scopes = []
+
+    def escalate(self, ctx, rule_result):
+        self.scopes.append(current_scope())
+        return True
+
+
+class _AsyncScopeCapturingHandler(EscalationHandler):
+    def __init__(self) -> None:
+        self.scopes = []
+
+    async def escalate(self, ctx, rule_result):
+        self.scopes.append(current_scope())
+        return True
+
+
+def test_handler_sees_the_callers_scope_under_the_sync_engine():
+    """The sync engine runs the handler in a worker thread, which starts with a
+    fresh, empty contextvars context unless the caller's is copied in — a
+    handler routing an approval by caller identity would otherwise see the
+    root scope."""
+    handler = _ScopeCapturingHandler()
+    register_handler("scope-sync-scheme", handler)
+
+    scope = ExecutionScope(session_id="s1", caller_agent_id="billing_agent", caller_role="finance")
+    with use_scope(scope):
+        evaluate_call(
+            tool_name="t",
+            args={},
+            invoke=lambda: {"ok": True},
+            policies=[_escalating_policy("scoped", "scope-sync-scheme")],
+            mode="enforce",
+            scope=scope,
+        )
+
+    assert [(s.session_id, s.caller_agent_id, s.caller_role) for s in handler.scopes] == [
+        ("s1", "billing_agent", "finance")
+    ]
+
+
+async def test_sync_handler_sees_the_callers_scope_under_the_async_engine():
+    handler = _ScopeCapturingHandler()
+    register_handler("scope-async-sync-scheme", handler)
+
+    async def invoke():
+        return {"ok": True}
+
+    scope = ExecutionScope(session_id="s2", caller_agent_id="billing_agent", caller_role="finance")
+    with use_scope(scope):
+        await evaluate_call_async(
+            tool_name="t",
+            args={},
+            invoke=invoke,
+            policies=[_escalating_policy("scoped_async", "scope-async-sync-scheme")],
+            mode="enforce",
+            scope=scope,
+        )
+
+    assert [(s.session_id, s.caller_role) for s in handler.scopes] == [("s2", "finance")]
+
+
+async def test_async_handler_sees_the_callers_scope_under_the_async_engine():
+    handler = _AsyncScopeCapturingHandler()
+    register_handler("scope-async-scheme", handler)
+
+    async def invoke():
+        return {"ok": True}
+
+    scope = ExecutionScope(session_id="s3", caller_agent_id="billing_agent", caller_role="finance")
+    with use_scope(scope):
+        await evaluate_call_async(
+            tool_name="t",
+            args={},
+            invoke=invoke,
+            policies=[_escalating_policy("scoped_async2", "scope-async-scheme")],
+            mode="enforce",
+            scope=scope,
+        )
+
+    assert [(s.session_id, s.caller_role) for s in handler.scopes] == [("s3", "finance")]
+
+
+async def test_async_engine_denies_a_hung_async_handler_end_to_end_within_the_timeout():
+    """The async twin of `test_evaluate_call_enforces_timeout_end_to_end`: an
+    `async def escalate` that never answers must be denied on the deadline, not
+    awaited to completion."""
+
+    class HangingAsyncHandler(EscalationHandler):
+        async def escalate(self, ctx, rule_result):
+            await asyncio.sleep(30)
+            return True
+
+    register_handler("hung-async-scheme", HangingAsyncHandler())
+
+    policy = PolicySet("hung_async")
+    policy.require(
+        lambda ctx: False,
+        on_fail=ESCALATE,
+        reason="needs approval",
+        escalate_to="hung-async-scheme://wherever",
+        timeout_s=0.2,
+    )
+
+    async def invoke():
+        return {"ok": True}
+
+    start = time.perf_counter()
+    with pytest.raises(GuardBlocked) as excinfo:
+        await evaluate_call_async(
+            tool_name="t",
+            args={},
+            invoke=invoke,
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+        )
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 5.0  # bounded by timeout_s=0.2, not the handler's 30s sleep
+    assert "denied/timed out" in excinfo.value.decision.reason
+
+
+async def test_a_hung_sync_handler_does_not_block_the_event_loop():
+    """A sync `escalate` is dispatched to a thread pool precisely so
+    `asyncio.wait_for`'s timeout can still fire — awaited naively it would
+    freeze the loop and the deadline could never be reached."""
+    ticks = []
+
+    async def ticker():
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            ticks.append(1)
+
+    def hangs_forever(ctx, rule_result):
+        time.sleep(5)
+        return True
+
+    task = asyncio.ensure_future(ticker())
+    result = await _run_with_timeout_async(hangs_forever, _ctx(), _rule_result(timeout_s=0.2))
+    task.cancel()
+
+    assert result is False
+    assert ticks, "the event loop kept running while the handler was blocked"

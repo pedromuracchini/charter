@@ -2,10 +2,18 @@ import pytest
 
 from tollgate._engine import _maybe_await, evaluate_call, evaluate_call_async
 from tollgate._scope import current_scope
+from tollgate.core.escalation import EscalationHandler, register_handler
+from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.core.policy_set import PolicySet
 from tollgate.core.reversible import ReversibleAction
 from tollgate.decisions import BLOCK, ESCALATE, GuardBlocked
 from tollgate.ledger.ledger import ActionLedger
+
+
+def _post_block_policy(name="post_blocks"):
+    policy = PolicySet(name)
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="result rejected", hook="post")
+    return policy
 
 
 def test_low_executes_normally_no_intrinsic_check():
@@ -307,3 +315,246 @@ def test_post_block_with_undo_fn_still_records_the_undo():
 
     assert undone == [{"id": 1}]
     assert ActionLedger.current().events()[-1].undo_op == "delete_thing.undo"
+
+
+# --- ReversibleAction through TollgateInterceptor -------------------------
+#
+# `@guard` and the interceptor build the `invoke` closure differently — the
+# interceptor passes the assembled `args` mapping to `action(args)` itself —
+# so the reversible path has to be exercised through both entry points.
+
+
+def test_interceptor_call_passes_args_mapping_to_the_action():
+    received = []
+    action = ReversibleAction(
+        do_fn=lambda args: received.append(args) or {"ok": True},
+        undo_fn=lambda args, snapshot: None,
+        name="update_rows",
+        irreversibility_level="low",
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    assert interceptor.call("update_rows", action, args={"rows": 3}) == {"ok": True}
+    assert received == [{"rows": 3}]
+
+
+def test_interceptor_post_block_triggers_undo():
+    undone = []
+    action = ReversibleAction(
+        do_fn=lambda args: {"rows_affected": args["rows"]},
+        undo_fn=lambda args, snapshot: undone.append((args, snapshot)),
+        name="update_rows",
+        irreversibility_level="low",
+        pre_snapshot=lambda args: {"before": True},
+    )
+    interceptor = TollgateInterceptor(policies=[_post_block_policy()])
+
+    with pytest.raises(GuardBlocked) as excinfo:
+        interceptor.call("update_rows", action, args={"rows": 5})
+
+    assert excinfo.value.decision.undo_executed is True
+    assert undone == [({"rows": 5}, {"before": True})]
+    assert ActionLedger.current().events()[-1].undo_op == "update_rows.undo"
+
+
+def test_interceptor_blocks_a_permanent_action():
+    calls = []
+    action = ReversibleAction(
+        do_fn=lambda args: calls.append(args), undo_fn=None, name="drop_db", irreversibility_level="permanent"
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    with pytest.raises(GuardBlocked):
+        interceptor.call("drop_db", action, args={})
+
+    assert calls == []
+    event = ActionLedger.current().events()[-1]
+    assert event.decision == "BLOCK"
+    assert event.policy == "reversible_action.permanent"
+
+
+def test_interceptor_escalates_a_high_action_and_fails_safe_to_block():
+    calls = []
+    action = ReversibleAction(
+        do_fn=lambda args: calls.append(args),
+        undo_fn=None,
+        name="delete_bucket",
+        irreversibility_level="high",
+        escalate_to="unregistered-scheme://ops",
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    with pytest.raises(GuardBlocked):
+        interceptor.call("delete_bucket", action, args={"bucket": "b"})
+
+    assert calls == []
+    event = ActionLedger.current().events()[-1]
+    assert event.decision == "ESCALATE"
+    assert event.policy == "reversible_action.high"
+
+
+def test_interceptor_high_action_runs_once_the_escalation_is_approved():
+    class Approve(EscalationHandler):
+        def escalate(self, ctx, rule_result):
+            return True
+
+    register_handler("interceptor-approve-scheme", Approve())
+
+    calls = []
+    action = ReversibleAction(
+        do_fn=lambda args: calls.append(args),
+        undo_fn=None,
+        name="delete_bucket",
+        irreversibility_level="high",
+        escalate_to="interceptor-approve-scheme://ops",
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    interceptor.call("delete_bucket", action, args={"bucket": "b"})
+
+    assert calls == [{"bucket": "b"}]
+
+
+def test_interceptor_records_the_ledger_event_with_caller_identity():
+    """The interceptor's `ExecutionScope` must reach the reversible action's
+    intrinsic decision, not just the ordinary policy path."""
+    action = ReversibleAction(
+        do_fn=lambda args: None, undo_fn=None, name="drop_db", irreversibility_level="permanent"
+    )
+    interceptor = TollgateInterceptor(policies=[], agent_id="cleanup_agent")
+
+    with pytest.raises(GuardBlocked):
+        interceptor.call("drop_db", action, args={"db": "prod"}, session_id="s1")
+
+    event = ActionLedger.current().events()[-1]
+    assert event.tool == "drop_db"
+    assert event.args == {"db": "prod"}
+    assert event.session_id == "s1"
+    assert event.caller_agent_id == "cleanup_agent"
+    assert event.delegation_chain == ["cleanup_agent"]
+
+
+def test_interceptor_dry_run_never_undoes_a_reversible_action():
+    undone = []
+    action = ReversibleAction(
+        do_fn=lambda args: {"rows_affected": args["rows"]},
+        undo_fn=lambda args, snapshot: undone.append(args),
+        name="update_rows",
+        irreversibility_level="low",
+    )
+    interceptor = TollgateInterceptor(policies=[_post_block_policy()], mode="dry_run")
+
+    assert interceptor.call("update_rows", action, args={"rows": 5}) == {"rows_affected": 5}
+    assert undone == []
+    assert ActionLedger.current().events()[-1].decision == "BLOCK"
+
+
+def test_wrap_tool_on_a_reversible_action_names_the_wrapper_after_the_tool():
+    """`functools.update_wrapper` can't be used on a ReversibleAction — it has
+    no `__name__` — so the wrapper takes the registered tool name instead."""
+    action = ReversibleAction(
+        do_fn=lambda args: args, undo_fn=None, name="update_rows", irreversibility_level="low"
+    )
+    interceptor = TollgateInterceptor(policies=[])
+    wrapped = interceptor.wrap_tool("update_rows_tool", action)
+
+    assert wrapped.__name__ == "update_rows_tool"
+    assert wrapped.__tollgate_tool_name__ == "update_rows_tool"
+    assert wrapped(rows=1) == {"rows": 1}
+
+
+async def test_acall_passes_args_mapping_to_an_async_action():
+    received = []
+
+    async def async_do(args):
+        received.append(args)
+        return {"ok": True}
+
+    action = ReversibleAction(
+        do_fn=async_do, undo_fn=lambda args, snapshot: None, name="update_rows", irreversibility_level="low"
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    assert await interceptor.acall("update_rows", action, args={"rows": 3}) == {"ok": True}
+    assert received == [{"rows": 3}]
+
+
+async def test_acall_post_block_triggers_an_async_undo():
+    undone = []
+
+    async def async_do(args):
+        return {"rows_affected": args["rows"]}
+
+    async def async_undo(args, snapshot):
+        undone.append((args, snapshot))
+
+    action = ReversibleAction(
+        do_fn=async_do,
+        undo_fn=async_undo,
+        name="update_rows",
+        irreversibility_level="low",
+        pre_snapshot=lambda args: {"before": True},
+    )
+    interceptor = TollgateInterceptor(policies=[_post_block_policy()])
+
+    with pytest.raises(GuardBlocked) as excinfo:
+        await interceptor.acall("update_rows", action, args={"rows": 5})
+
+    assert excinfo.value.decision.undo_executed is True
+    assert undone == [({"rows": 5}, {"before": True})]
+    assert ActionLedger.current().events()[-1].undo_op == "update_rows.undo"
+
+
+async def test_acall_blocks_a_permanent_action_without_calling_do_fn():
+    calls = []
+
+    async def async_do(args):
+        calls.append(args)
+
+    action = ReversibleAction(do_fn=async_do, undo_fn=None, name="drop_db", irreversibility_level="permanent")
+    interceptor = TollgateInterceptor(policies=[])
+
+    with pytest.raises(GuardBlocked):
+        await interceptor.acall("drop_db", action, args={})
+
+    assert calls == []
+    assert ActionLedger.current().events()[-1].policy == "reversible_action.permanent"
+
+
+async def test_acall_escalates_a_high_action_via_an_async_handler():
+    class AsyncApprove(EscalationHandler):
+        async def escalate(self, ctx, rule_result):
+            return True
+
+    register_handler("acall-approve-scheme", AsyncApprove())
+
+    calls = []
+
+    async def async_do(args):
+        calls.append(args)
+
+    action = ReversibleAction(
+        do_fn=async_do,
+        undo_fn=None,
+        name="delete_bucket",
+        irreversibility_level="high",
+        escalate_to="acall-approve-scheme://ops",
+    )
+    interceptor = TollgateInterceptor(policies=[])
+
+    await interceptor.acall("delete_bucket", action, args={"bucket": "b"})
+
+    assert calls == [{"bucket": "b"}]
+    assert ActionLedger.current().events()[0].decision == "ESCALATE"
+
+
+async def test_wrap_tool_on_an_async_reversible_action_is_awaitable():
+    async def async_do(args):
+        return args
+
+    action = ReversibleAction(do_fn=async_do, undo_fn=None, name="update_rows", irreversibility_level="low")
+    interceptor = TollgateInterceptor(policies=[])
+    wrapped = interceptor.wrap_tool("update_rows_tool", action)
+
+    assert wrapped.__name__ == "update_rows_tool"
+    assert await wrapped(rows=1) == {"rows": 1}

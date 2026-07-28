@@ -1,9 +1,12 @@
+import json
+import sys
 import threading
 
 import pytest
 
 from tollgate._engine import evaluate_call
 from tollgate._scope import current_scope
+from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, ESCALATE, GuardBlocked
 from tollgate.ledger.event import LedgerEvent
@@ -225,6 +228,103 @@ def test_every_failing_rule_is_recorded_not_just_the_worst():
         ("hard stop", "BLOCK"),
     }
     assert all(r.policy_hash == policy.policy_hash for r in event.contributing_rules)
+
+
+def test_unwritable_sink_is_counted_not_raised(tmp_path):
+    """`record()` runs after the guarded tool already executed, so an OSError
+    from the sink must not become the call's outcome."""
+    ledger = ActionLedger(sink_path=tmp_path / "missing_dir" / "ledger.jsonl")
+    event = ledger.record(_event())
+
+    assert ledger.events() == [event]
+    assert ledger.sink_error_count == 1
+
+
+def test_sink_error_count_accumulates_per_failed_event(tmp_path):
+    ledger = ActionLedger(sink_path=tmp_path / "missing_dir" / "ledger.jsonl")
+    for i in range(3):
+        ledger.record(_event(event_id=f"evt_{i}"))
+
+    assert len(ledger.events()) == 3
+    assert ledger.sink_error_count == 3
+
+
+def test_sink_errors_show_up_in_repr(tmp_path):
+    ledger = ActionLedger(sink_path=tmp_path / "missing_dir" / "ledger.jsonl")
+    ledger.record(_event())
+    assert "sink_errors=1" in repr(ledger)
+
+
+def test_a_broken_sink_still_returns_the_tools_result_end_to_end(tmp_path):
+    """The whole point of swallowing the sink error: a call the policies
+    allowed must not fail because a copy of its record could not be written."""
+    ledger = ActionLedger(sink_path=tmp_path / "missing_dir" / "ledger.jsonl")
+    policy = PolicySet("allows")
+    policy.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
+    interceptor = TollgateInterceptor(policies=[policy], agent_id="a", ledger=ledger)
+
+    result = interceptor.call("t", lambda **kw: "the result", x=1)
+
+    assert result == "the result"
+    assert ledger.sink_error_count >= 1
+    assert ledger.events()
+
+
+def test_concurrent_records_never_interleave_partial_jsonl_lines(tmp_path):
+    """The sink is written under the instance lock; without it, two threads
+    appending at once can splice one event's JSON into another's line."""
+    sink = tmp_path / "ledger.jsonl"
+    ledger = ActionLedger(sink_path=sink, max_events=None)
+    n_threads, per_thread = 8, 40
+    barrier = threading.Barrier(n_threads)
+
+    def worker(index: int):
+        barrier.wait()
+        for i in range(per_thread):
+            ledger.record(_event(event_id=f"evt_{index}_{i}"))
+
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(original_interval)
+
+    lines = [line for line in sink.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == n_threads * per_thread
+    ids = {LedgerEvent.model_validate_json(line).event_id for line in lines}
+    assert len(ids) == n_threads * per_thread
+    assert ledger.sink_error_count == 0
+
+
+def test_concurrent_records_keep_every_event_in_memory(tmp_path):
+    sink = tmp_path / "ledger.jsonl"
+    ledger = ActionLedger(sink_path=sink, max_events=None)
+    barrier = threading.Barrier(6)
+
+    def worker(index: int):
+        barrier.wait()
+        for i in range(30):
+            ledger.record(_event(event_id=f"evt_{index}_{i}"))
+
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(original_interval)
+
+    assert len({e.event_id for e in ledger.events()}) == 180
+    on_disk = [json.loads(line) for line in sink.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert {e["event_id"] for e in on_disk} == {e.event_id for e in ledger.events()}
 
 
 def test_policy_hash_cache_is_invalidated_by_require():

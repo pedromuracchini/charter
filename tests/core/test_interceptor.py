@@ -1,11 +1,14 @@
 import asyncio
+import warnings
 
 import pytest
 
 from tollgate._scope import current_scope
 from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.core.policy_set import PolicySet
+from tollgate.core.reversible import ReversibleAction
 from tollgate.decisions import BLOCK, GuardBlocked
+from tollgate.errors import ConfigurationWarning
 from tollgate.ledger.ledger import ActionLedger
 
 
@@ -185,6 +188,248 @@ def test_step_index_is_unique_under_concurrent_calls():
         sys.setswitchinterval(original_interval)
 
     assert sorted(seen) == list(range(n_threads * per_thread))
+
+
+def test_args_mapping_reaches_a_tool_that_declares_domain():
+    """`domain` is an ordinary argument name for a real tool; `args={...}` is
+    the escape hatch that keeps it out of the interceptor's namespace."""
+    interceptor = TollgateInterceptor(policies=[])
+
+    def send(domain, body):
+        return f"{body}@{domain}"
+
+    assert interceptor.call("send", send, args={"domain": "example.com", "body": "hi"}) == "hi@example.com"
+
+
+def test_args_mapping_is_what_policies_see():
+    seen = {}
+    policy = PolicySet("capture")
+    policy.require(lambda ctx: seen.update(ctx.args) or True, on_fail=BLOCK, reason="never")
+    interceptor = TollgateInterceptor(policies=[policy])
+
+    interceptor.call("send", lambda domain: domain, args={"domain": "example.com"})
+
+    assert seen == {"domain": "example.com"}
+
+
+def test_args_and_kwargs_are_merged_with_kwargs_winning():
+    interceptor = TollgateInterceptor(policies=[])
+
+    def tool(a, b):
+        return (a, b)
+
+    assert interceptor.call("t", tool, args={"a": 1, "b": 2}, b=3) == (1, 3)
+
+
+def test_passing_domain_for_a_tool_that_declares_it_warns():
+    interceptor = TollgateInterceptor(policies=[])
+
+    def send(domain, body):
+        return f"{body}@{domain}"
+
+    with pytest.warns(ConfigurationWarning, match="domain"), pytest.raises(TypeError):
+        interceptor.call("send", send, domain="example.com", body="hi")
+
+
+def test_passing_session_id_for_a_tool_that_declares_it_warns():
+    interceptor = TollgateInterceptor(policies=[])
+
+    def resume(session_id):
+        return session_id
+
+    with pytest.warns(ConfigurationWarning, match="session_id"), pytest.raises(TypeError):
+        interceptor.call("resume", resume, session_id="s1")
+
+
+def test_no_warning_when_the_tool_declares_neither_reserved_name():
+    interceptor = TollgateInterceptor(policies=[])
+
+    def tool(x):
+        return x
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigurationWarning)
+        assert interceptor.call("t", tool, session_id="s1", domain="example.com", x=7) == 7
+
+
+def test_args_mapping_and_interceptor_domain_coexist_without_warning():
+    """With `args={...}` the two namespaces are already apart: the tool gets
+    its own `domain`, the scope gets the interceptor's, and there is nothing
+    to warn about."""
+    interceptor = TollgateInterceptor(policies=[])
+
+    def send(domain):
+        return (domain, current_scope().domain)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigurationWarning)
+        result = interceptor.call("send", send, args={"domain": "tool.example"}, domain="scope.example")
+
+    assert result == ("tool.example", "scope.example")
+
+
+def test_reversible_action_treats_reserved_names_as_interceptor_options():
+    """A ReversibleAction has no parameter list to inspect, so the split is by
+    contract, not by detection: **kwargs are its arguments, `session_id` and
+    `domain` are the interceptor's. Guessing was tried and rejected — mixing a
+    scope option with tool arguments is a correct, common pattern (see
+    examples/clinical.py), and a warning that fires on correct code teaches
+    people to ignore warnings."""
+    action = ReversibleAction(do_fn=lambda args: args, undo_fn=None, name="send")
+    interceptor = TollgateInterceptor(policies=[])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigurationWarning)
+        result = interceptor.call("send", action, domain="example.com", body="hi")
+
+    assert result == {"body": "hi"}
+    assert "domain" not in result
+
+
+def test_reversible_action_reaches_its_arguments_through_args():
+    action = ReversibleAction(do_fn=lambda args: args, undo_fn=None, name="send")
+    interceptor = TollgateInterceptor(policies=[])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConfigurationWarning)
+        result = interceptor.call(
+            "send", action, args={"domain": "tool.example", "body": "hi"}, session_id="s1"
+        )
+
+    assert result == {"domain": "tool.example", "body": "hi"}
+
+
+def test_wrap_tool_forwards_reserved_names_as_tool_arguments():
+    """An agent framework invoking a wrapped tool is passing the model's
+    arguments, so a `session_id` parameter must reach the tool intact."""
+    interceptor = TollgateInterceptor(policies=[])
+
+    def resume(session_id, domain):
+        return f"{session_id}/{domain}"
+
+    wrapped = interceptor.wrap_tool("resume", resume)
+    assert wrapped(session_id="s1", domain="example.com") == "s1/example.com"
+
+
+async def test_wrap_tool_forwards_reserved_names_for_an_async_tool():
+    interceptor = TollgateInterceptor(policies=[])
+
+    async def resume(session_id):
+        return session_id
+
+    wrapped = interceptor.wrap_tool("resume", resume)
+    assert await wrapped(session_id="s1") == "s1"
+
+
+def test_tool_arguments_may_be_named_tool_name_and_func():
+    """`tool_name`/`func` are positional-only on call(), so a tool may declare
+    parameters by those names."""
+    interceptor = TollgateInterceptor(policies=[])
+
+    def register(tool_name, func):
+        return f"{tool_name}:{func}"
+
+    assert interceptor.call("register", register, tool_name="double", func="fn") == "double:fn"
+
+
+async def test_acall_accepts_an_args_mapping_for_a_shadowing_tool():
+    interceptor = TollgateInterceptor(policies=[])
+
+    async def send(domain, session_id):
+        return f"{session_id}@{domain}"
+
+    result = await interceptor.acall("send", send, args={"domain": "example.com", "session_id": "s1"})
+    assert result == "s1@example.com"
+
+
+async def test_acall_warns_when_a_reserved_name_is_shadowed():
+    interceptor = TollgateInterceptor(policies=[])
+
+    async def send(domain):
+        return domain
+
+    with pytest.warns(ConfigurationWarning, match="domain"), pytest.raises(TypeError):
+        await interceptor.acall("send", send, domain="example.com")
+
+
+def test_session_id_still_reaches_the_scope_when_not_shadowed():
+    interceptor = TollgateInterceptor(policies=[])
+
+    assert interceptor.call("probe", lambda: current_scope().session_id, session_id="s1") == "s1"
+    assert interceptor.call("probe", lambda: current_scope().domain, domain="example.com") == "example.com"
+
+
+def test_scope_defaults_when_session_id_and_domain_are_left_unset():
+    interceptor = TollgateInterceptor(policies=[])
+
+    assert interceptor.call("probe", lambda: current_scope().session_id) == "default"
+    assert interceptor.call("probe", lambda: current_scope().domain) is None
+
+
+def test_per_interceptor_ledgers_stay_separate_from_each_other_and_the_global_one():
+    ledger_a, ledger_b = ActionLedger(), ActionLedger()
+    a = TollgateInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_a)
+    b = TollgateInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_b)
+
+    a.call("tool_a", lambda: None)
+    b.call("tool_b", lambda: None)
+
+    assert [e.tool for e in ledger_a.events()] == ["tool_a"]
+    assert [e.tool for e in ledger_b.events()] == ["tool_b"]
+    assert ActionLedger.current().events() == []
+
+
+def test_interceptor_ledger_records_tool_errors_too():
+    ledger = ActionLedger()
+    interceptor = TollgateInterceptor(policies=[], ledger=ledger)
+
+    def broken():
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        interceptor.call("broken", broken)
+
+    assert [(e.decision, e.hook) for e in ledger.events()] == [("ERROR", "invoke")]
+    assert ActionLedger.current().events() == []
+
+
+class _KeyErasingRedactor:
+    """Scrubs every argument wholesale, so a test can tell it apart from the
+    process-wide default redactor."""
+
+    def redact_args(self, args):
+        return dict.fromkeys(args, "<GONE>")
+
+    def redact_text(self, text):
+        return text.replace("secret", "<GONE>")
+
+
+def test_interceptor_redactor_is_what_scrubs_the_recorded_args():
+    ledger = ActionLedger()
+    policy = PolicySet("deny")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="the secret is bad")
+    interceptor = TollgateInterceptor(
+        policies=[policy], mode="observe", ledger=ledger, redactor=_KeyErasingRedactor()
+    )
+
+    interceptor.call("t", lambda token: None, args={"token": "ordinary-looking"})
+
+    event = ledger.events()[-1]
+    assert event.args == {"token": "<GONE>"}
+    assert event.reason == "the <GONE> is bad"
+
+
+async def test_interceptor_redactor_and_ledger_apply_to_acall_too():
+    ledger = ActionLedger()
+    interceptor = TollgateInterceptor(policies=[], ledger=ledger, redactor=_KeyErasingRedactor())
+
+    async def broken(token):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await interceptor.acall("broken", broken, args={"token": "x"})
+
+    assert ledger.events()[-1].args == {"token": "<GONE>"}
 
 
 def test_wrapped_tools_registry_is_safe_under_concurrent_wrapping():
