@@ -27,6 +27,7 @@ from typing import Literal
 from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import Policy
 from tollgate.decisions import RuleResult, pick_decision
+from tollgate.errors import ConfigurationError, LedgerEventNotFound
 from tollgate.ledger.event import LedgerEvent
 from tollgate.redaction import contains_placeholder
 
@@ -61,6 +62,17 @@ class ActionLedger:
         self._events: deque[LedgerEvent] = deque(maxlen=max_events)
         self._sink_path = Path(sink_path) if sink_path is not None else None
         self._dropped_count = 0
+        self._sink_error_count = 0
+
+    def __repr__(self) -> str:
+        with self._lock:
+            count, dropped, errors = len(self._events), self._dropped_count, self._sink_error_count
+        parts = [f"events={count}", f"dropped={dropped}"]
+        if self._sink_path is not None:
+            parts.append(f"sink_path={str(self._sink_path)!r}")
+        if errors:
+            parts.append(f"sink_errors={errors}")
+        return f"<ActionLedger {' '.join(parts)}>"
 
     @property
     def sink_path(self) -> Path | None:
@@ -119,14 +131,51 @@ class ActionLedger:
         with self._lock:
             return self._dropped_count
 
+    @property
+    def sink_error_count(self) -> int:
+        """How many events failed to reach `sink_path`.
+
+        Non-zero means the on-disk audit trail has gaps the in-memory ledger
+        does not — worth alerting on, since `record()` deliberately swallows
+        these rather than failing the guarded call.
+        """
+        with self._lock:
+            return self._sink_error_count
+
     def record(self, event: LedgerEvent) -> LedgerEvent:
+        """Append one event to memory and, if configured, to the JSONL sink.
+
+        A sink write that fails is logged and counted in `sink_error_count`,
+        never raised. `record()` runs *after* the guarded tool has already
+        executed, so propagating an `OSError` from a full disk or a read-only
+        path would convert a call the policies explicitly allowed into a
+        failure — losing the tool's result to protect a copy of the record that
+        is also in memory. The in-memory event is appended first, so it
+        survives regardless.
+
+        The file is opened and closed per event rather than held open, which
+        keeps the sink safe to rotate underneath a long-lived process. The
+        write happens under the instance lock so concurrent recorders can't
+        interleave partial lines into the file.
+        """
         with self._lock:
             if self._events.maxlen is not None and len(self._events) == self._events.maxlen:
                 self._dropped_count += 1
             self._events.append(event)
             if self._sink_path is not None:
-                with self._sink_path.open("a", encoding="utf-8") as f:
-                    f.write(event.model_dump_json() + "\n")
+                try:
+                    with self._sink_path.open("a", encoding="utf-8") as f:
+                        f.write(event.model_dump_json() + "\n")
+                except OSError as exc:
+                    self._sink_error_count += 1
+                    logger.error(
+                        "could not write event %s to ledger sink %s: %s: %s — "
+                        "the event is still in the in-memory ledger",
+                        event.event_id,
+                        self._sink_path,
+                        type(exc).__name__,
+                        exc,
+                    )
         return event
 
     def events(self) -> list[LedgerEvent]:
@@ -146,7 +195,7 @@ class ActionLedger:
             return json.dumps([e.model_dump() for e in events], indent=2, default=str)
         if format == "csv":
             return _events_to_csv(events)
-        raise ValueError(f"unsupported compliance report format: {format!r}")
+        raise ConfigurationError(f"unsupported compliance report format: {format!r}")
 
     def export_policy_graph(self, format: GraphFormat = "mermaid") -> str:
         from tollgate.report.graph import policy_graph
@@ -225,7 +274,7 @@ def replay(
     """
     event = ActionLedger.current().get(event_id)
     if event is None:
-        raise KeyError(f"no ledger event found with id {event_id!r}")
+        raise LedgerEventNotFound(f"no ledger event found with id {event_id!r}")
 
     from tollgate._scope import ExecutionScope
 

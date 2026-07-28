@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import inspect
 import logging
 import time
@@ -54,9 +55,10 @@ from tollgate.ledger.ledger import ActionLedger
 from tollgate.multiagent.delegation import delegation_depth
 from tollgate.otel.metrics import record_decision, record_delegation_depth, record_escalation
 from tollgate.otel.spans import evaluate_span, should_sample
-from tollgate.redaction import current_redactor
+from tollgate.redaction import Redactor, current_redactor
 
-logger = logging.getLogger("tollgate.reversible")
+logger = logging.getLogger("tollgate.engine")
+_undo_logger = logging.getLogger("tollgate.reversible")
 _escalation_logger = logging.getLogger("tollgate.escalation")
 
 
@@ -88,7 +90,10 @@ def _run_with_timeout(fn: Callable[[], bool | Awaitable[bool]], timeout_s: float
     silently approve everything).
     """
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(fn)
+    # Copy the caller's context so a handler reading `tollgate.current_scope()`
+    # sees the identity that triggered the escalation, not the root scope: a
+    # bare worker thread starts with a fresh, empty `contextvars` context.
+    future = executor.submit(contextvars.copy_context().run, fn)
     try:
         result = future.result(timeout=timeout_s)
     except concurrent.futures.TimeoutError:
@@ -135,22 +140,39 @@ async def _run_with_timeout_async(
 
     A plain sync `escalate` would block the whole event loop if awaited
     naively — `asyncio.wait_for`'s timeout can't fire while the loop itself is
-    blocked. So a sync `escalate` is dispatched to the default thread pool
-    executor (`loop.run_in_executor`), exactly like the sync engine's
-    `_run_with_timeout`; an `async def escalate` is awaited directly. Either
-    way, `asyncio.wait_for` enforces `rule_result.timeout_s`.
+    blocked. So a sync `escalate` is dispatched to a thread pool, exactly like
+    the sync engine's `_run_with_timeout`; an `async def escalate` is awaited
+    directly. Either way, `asyncio.wait_for` enforces `rule_result.timeout_s`.
+
+    The thread pool is a *disposable* one rather than the loop's default
+    executor, for the same reason `_run_with_timeout` builds its own: on
+    timeout `wait_for` cancels the future but cannot stop the thread already
+    running inside it. Parked in the default executor, that abandoned thread
+    occupies a shared worker for as long as it runs and makes
+    `loop.shutdown_default_executor()` hang at interpreter exit. Here it only
+    holds its own pool, which is shut down without waiting and then garbage
+    collected once the thread finally returns.
+
+    Context variables are copied into the worker thread, so a handler that
+    reads `tollgate.current_scope()` sees the caller's identity rather than the
+    root scope.
     """
-    loop = asyncio.get_event_loop()
     try:
         if inspect.iscoroutinefunction(handler_escalate):
             result = await asyncio.wait_for(
                 handler_escalate(ctx, rule_result), timeout=rule_result.timeout_s
             )
         else:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, handler_escalate, ctx, rule_result),
-                timeout=rule_result.timeout_s,
-            )
+            loop = asyncio.get_running_loop()
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            context = contextvars.copy_context()
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(executor, context.run, handler_escalate, ctx, rule_result),
+                    timeout=rule_result.timeout_s,
+                )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
     except TimeoutError:
         _escalation_logger.warning(
             "escalation handler exceeded timeout_s=%s — denying (fail-safe)", rule_result.timeout_s
@@ -283,6 +305,8 @@ def _record(
     latency_ms: float,
     tracer_provider: Any = None,
     sampled: bool | None = None,
+    ledger: ActionLedger | None = None,
+    redactor: Redactor | None = None,
 ) -> LedgerEvent:
     # A failure (BLOCK/ESCALATE) is always written to the ledger; only its span
     # is sampled, rolled here. An ALLOW's caller has already rolled once for the
@@ -304,7 +328,7 @@ def _record(
         # point before the values become durable. `reason`/`undo_op` are
         # scrubbed too — a fail-closed predicate folds its exception text into
         # the reason, and that text routinely quotes the argument that broke it.
-        redactor = current_redactor()
+        redactor = redactor if redactor is not None else current_redactor()
         event = LedgerEvent(
             event_id=_new_event_id(),
             ts=datetime.now(UTC).isoformat(),
@@ -339,7 +363,7 @@ def _record(
             otel_trace_id=span_ids[0] if span_ids else None,
             otel_span_id=span_ids[1] if span_ids else None,
         )
-    return ActionLedger.current().record(event)
+    return (ledger if ledger is not None else ActionLedger.current()).record(event)
 
 
 def _undo_unavailable(reversible: ReversibleAction, decision: GuardDecision) -> tuple[None, GuardDecision]:
@@ -349,7 +373,7 @@ def _undo_unavailable(reversible: ReversibleAction, decision: GuardDecision) -> 
     to record `"<name>.undo"` and `undo_executed=True` anyway — a false success
     in the audit trail at exactly the moment nothing was reverted.
     """
-    logger.warning(
+    _undo_logger.warning(
         "post-BLOCK on %r, which has no undo_fn — the action already ran and was NOT reverted",
         reversible.name,
     )
@@ -364,7 +388,7 @@ def _undo_failed(
     """Bookkeeping for an `undo_fn` that raised. Losing the ledger event here
     would defeat the point of having one, so the failure is folded into the
     record rather than propagated."""
-    logger.error(
+    _undo_logger.error(
         "undo for %r failed after a post-BLOCK: %s: %s", reversible.name, type(exc).__name__, exc
     )
     return (
@@ -377,7 +401,14 @@ def _undo_succeeded(reversible: ReversibleAction, decision: GuardDecision) -> tu
     return f"{reversible.name}.undo", replace(decision, undo_executed=True)
 
 
-def _record_tool_error(ctx: GuardContext, exc: BaseException, *, mode: str) -> None:
+def _record_tool_error(
+    ctx: GuardContext,
+    exc: BaseException,
+    *,
+    mode: str,
+    ledger: ActionLedger | None = None,
+    redactor: Redactor | None = None,
+) -> None:
     """Record that an authorized tool call raised.
 
     Without this, a tool that blows up skips every post-hook and writes nothing:
@@ -387,8 +418,8 @@ def _record_tool_error(ctx: GuardContext, exc: BaseException, *, mode: str) -> N
     No OTEL span is emitted: Tollgate made no decision here, and whatever
     instruments the tool itself owns that part of the trace.
     """
-    redactor = current_redactor()
-    ActionLedger.current().record(
+    redactor = redactor if redactor is not None else current_redactor()
+    (ledger if ledger is not None else ActionLedger.current()).record(
         LedgerEvent(
             event_id=_new_event_id(),
             ts=datetime.now(UTC).isoformat(),
@@ -439,6 +470,8 @@ def _record_allow(
     mode: str,
     contributors: list[tuple[str, str | None]],
     tracer_provider: Any = None,
+    ledger: ActionLedger | None = None,
+    redactor: Redactor | None = None,
 ) -> None:
     decision = GuardDecision(
         action=ALLOW,
@@ -458,6 +491,8 @@ def _record_allow(
         latency_ms=0.0,
         tracer_provider=tracer_provider,
         sampled=True,
+        ledger=ledger,
+        redactor=redactor,
     )
 
 
@@ -471,6 +506,8 @@ def evaluate_call(
     scope: ExecutionScope,
     reversible: ReversibleAction | None = None,
     tracer_provider: Any = None,
+    ledger: ActionLedger | None = None,
+    redactor: Redactor | None = None,
 ) -> Any:
     """Run one tool call through the full pre/execute/post pipeline.
 
@@ -518,19 +555,27 @@ def evaluate_call(
             undo_op=None,
             latency_ms=latency_ms,
             tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
         if should_block and mode == "enforce":
             raise GuardBlocked(decision)
     elif pre_results:
         _record_allow(
-            ctx, hook="pre", mode=mode, contributors=pre_contributors, tracer_provider=tracer_provider
+            ctx,
+            hook="pre",
+            mode=mode,
+            contributors=pre_contributors,
+            tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
 
     snapshot = reversible.snapshot(args) if reversible is not None else None
     try:
         result = invoke()
     except BaseException as exc:
-        _record_tool_error(ctx, exc, mode=mode)
+        _record_tool_error(ctx, exc, mode=mode, ledger=ledger, redactor=redactor)
         raise
     ctx.result = result
 
@@ -568,12 +613,20 @@ def evaluate_call(
             undo_op=undo_op,
             latency_ms=latency_ms,
             tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
         if should_block and mode == "enforce":
             raise GuardBlocked(decision)
     elif post_results:
         _record_allow(
-            ctx, hook="post", mode=mode, contributors=post_contributors, tracer_provider=tracer_provider
+            ctx,
+            hook="post",
+            mode=mode,
+            contributors=post_contributors,
+            tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
 
     return result
@@ -589,6 +642,8 @@ async def evaluate_call_async(
     scope: ExecutionScope,
     reversible: ReversibleAction | None = None,
     tracer_provider: Any = None,
+    ledger: ActionLedger | None = None,
+    redactor: Redactor | None = None,
 ) -> Any:
     """Async sibling of `evaluate_call` — identical semantics and identical
     ledger/OTEL behavior, for an `async def` tool function.
@@ -633,19 +688,27 @@ async def evaluate_call_async(
             undo_op=None,
             latency_ms=latency_ms,
             tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
         if should_block and mode == "enforce":
             raise GuardBlocked(decision)
     elif pre_results:
         _record_allow(
-            ctx, hook="pre", mode=mode, contributors=pre_contributors, tracer_provider=tracer_provider
+            ctx,
+            hook="pre",
+            mode=mode,
+            contributors=pre_contributors,
+            tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
 
     snapshot = reversible.snapshot(args) if reversible is not None else None
     try:
         result = await invoke()
     except BaseException as exc:
-        _record_tool_error(ctx, exc, mode=mode)
+        _record_tool_error(ctx, exc, mode=mode, ledger=ledger, redactor=redactor)
         raise
     ctx.result = result
 
@@ -683,12 +746,20 @@ async def evaluate_call_async(
             undo_op=undo_op,
             latency_ms=latency_ms,
             tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
         if should_block and mode == "enforce":
             raise GuardBlocked(decision)
     elif post_results:
         _record_allow(
-            ctx, hook="post", mode=mode, contributors=post_contributors, tracer_provider=tracer_provider
+            ctx,
+            hook="post",
+            mode=mode,
+            contributors=post_contributors,
+            tracer_provider=tracer_provider,
+            ledger=ledger,
+            redactor=redactor,
         )
 
     return result
