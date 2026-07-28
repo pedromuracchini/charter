@@ -19,6 +19,7 @@ from tollgate.core.escalation import (
 )
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
+from tollgate.ledger.ledger import ActionLedger
 
 
 def _ctx():
@@ -188,3 +189,104 @@ async def test_evaluate_call_async_enforces_timeout_end_to_end():
         )
     elapsed = time.perf_counter() - start
     assert elapsed < 4.0
+
+
+class _SpyHandler(EscalationHandler):
+    """Records every invocation so a test can assert it was never contacted."""
+
+    def __init__(self, approves: bool = True) -> None:
+        self.calls: list[str] = []
+        self._approves = approves
+
+    def escalate(self, ctx, rule_result):
+        self.calls.append(ctx.tool_name)
+        return self._approves
+
+
+def _escalating_policy(name: str, scheme: str) -> PolicySet:
+    policy = PolicySet(name)
+    policy.require(
+        lambda ctx: False,
+        on_fail=ESCALATE,
+        reason="needs approval",
+        escalate_to=f"{scheme}://wherever",
+    )
+    return policy
+
+
+@pytest.mark.parametrize("mode", ["dry_run", "observe"])
+def test_non_enforce_modes_never_contact_an_escalation_handler(mode):
+    """A dry run must answer "what would this policy do?" without paging a
+    human — no Slack post, no approval webhook, no blocking on input()."""
+    spy = _SpyHandler()
+    register_handler("spy-scheme", spy)
+
+    result = evaluate_call(
+        tool_name="t",
+        args={},
+        invoke=lambda: {"ok": True},
+        policies=[_escalating_policy("dry", "spy-scheme")],
+        mode=mode,
+        scope=current_scope(),
+    )
+
+    assert spy.calls == []
+    assert result == {"ok": True}  # non-enforce modes never block
+
+
+@pytest.mark.parametrize("mode", ["dry_run", "observe"])
+async def test_non_enforce_modes_never_contact_a_handler_async(mode):
+    spy = _SpyHandler()
+    register_handler("spy-async-scheme", spy)
+
+    async def invoke():
+        return {"ok": True}
+
+    result = await evaluate_call_async(
+        tool_name="t",
+        args={},
+        invoke=invoke,
+        policies=[_escalating_policy("dry_async", "spy-async-scheme")],
+        mode=mode,
+        scope=current_scope(),
+    )
+
+    assert spy.calls == []
+    assert result == {"ok": True}
+
+
+def test_dry_run_still_records_the_escalation_it_would_have_raised():
+    """Not contacting the handler must not cost the audit trail — the whole
+    point of a dry run is seeing what the policy would have done."""
+    register_handler("spy-recorded-scheme", _SpyHandler())
+
+    evaluate_call(
+        tool_name="risky_tool",
+        args={},
+        invoke=lambda: None,
+        policies=[_escalating_policy("recorded", "spy-recorded-scheme")],
+        mode="dry_run",
+        scope=current_scope(),
+    )
+
+    events = [e for e in ActionLedger.current().events() if e.tool == "risky_tool"]
+    assert len(events) == 1
+    assert events[0].decision == "ESCALATE"
+    assert events[0].mode == "dry_run"
+    assert "not resolved" in events[0].reason
+
+
+def test_enforce_mode_still_contacts_the_handler():
+    spy = _SpyHandler(approves=True)
+    register_handler("spy-enforce-scheme", spy)
+
+    evaluate_call(
+        tool_name="t",
+        args={},
+        invoke=lambda: {"ok": True},
+        policies=[_escalating_policy("enforced", "spy-enforce-scheme")],
+        mode="enforce",
+        scope=current_scope(),
+    )
+
+    assert spy.calls == ["t"]

@@ -62,14 +62,27 @@ call-sites.
 
 Pipeline per call: build `GuardContext` → evaluate pre-hook rules across all
 active policies → resolve the worst failure (BLOCK > ESCALATE > ALLOW
-precedence, see `decisions.pick_decision`) → if ESCALATE, call the resolved
-`EscalationHandler` (with `timeout_s` actually enforced — see below) →
+precedence, see `decisions.pick_decision`) → if ESCALATE **and** the mode is
+`enforce`, call the resolved `EscalationHandler` (with `timeout_s` actually
+enforced — see below) →
 execute the tool (unless blocked in `enforce` mode) → evaluate post-hook rules
 → on a post-BLOCK, auto-invoke `ReversibleAction.undo` if the call wrapped one
 (a failure here still records the ledger event — see below) → record one
 `LedgerEvent` per hook that had a qualifying decision (always for
 BLOCK/ESCALATE/log-only-ALLOW; sampled for an aggregate "everything passed"
 ALLOW) → emit a `tollgate.evaluate` OTEL span and metrics alongside it.
+
+### Only `enforce` mode may have side effects beyond recording
+
+`dry_run` and `observe` exist to answer "what would these policies do?" against
+real traffic. That is worthless if asking the question pages a human, so
+`_engine._unresolved_escalation` short-circuits every ESCALATE outside
+`enforce`: the decision is still resolved to `ESCALATE`, still recorded to the
+ledger, still spanned — but no `EscalationHandler` is contacted, so nothing is
+posted to Slack, no approval webhook fires, and nothing blocks on `input()`.
+The reason text is suffixed so the ledger distinguishes "denied" from "never
+asked". Same rule for the other two side-effecting steps, which were already
+gated: non-enforce modes never raise `GuardBlocked` and never auto-undo.
 
 ### A policy predicate (or an undo, or an escalation) can never crash the call it's guarding
 

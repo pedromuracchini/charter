@@ -11,6 +11,10 @@ Sampling: a failing rule (BLOCK/ESCALATE/log-only ALLOW) is always recorded.
 When every applicable rule passes, a single aggregate ALLOW entry is recorded,
 sampled at `OtelSettings.allow_sample_rate` (default 1.0 — always).
 
+Modes: only `enforce` may have side effects beyond recording. `dry_run` and
+`observe` evaluate every rule and record every decision, but never block, never
+undo, and never contact an escalation handler — see `_unresolved_escalation`.
+
 Async: predicates (`pre`/`post`, `active_when`, `applies_to`) are always sync
 — only tool invocation (`invoke`), `ReversibleAction.undo_fn`, and
 `EscalationHandler.escalate` may be async. `_maybe_await` lets a single
@@ -160,7 +164,31 @@ async def _run_with_timeout_async(
     return bool(result)
 
 
-def _resolve(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision, bool]:
+#: Reason suffix used when an ESCALATE is recorded without contacting a handler
+#: because the interceptor is not in `enforce` mode. See `_unresolved_escalation`.
+_UNRESOLVED_SUFFIX = " (escalation not resolved — {mode} mode, would block pending approval)"
+
+
+def _unresolved_escalation(rule_result: RuleResult, mode: str) -> tuple[GuardDecision, bool]:
+    """The decision for an ESCALATE that deliberately was not sent to a handler.
+
+    Outside `enforce` mode the call proceeds no matter what, so contacting the
+    handler would buy nothing and cost a real side effect: posting to Slack,
+    hitting an approval webhook, or blocking on `input()` for up to `timeout_s`.
+    A dry run must be able to answer "what would this policy do?" without
+    paging a human. `should_block=True` reports what *would* have happened;
+    both engines gate the actual block on `mode == "enforce"` regardless.
+    """
+    decision = GuardDecision(
+        action=ESCALATE,
+        reason=rule_result.reason + _UNRESOLVED_SUFFIX.format(mode=mode),
+        policy_name=rule_result.policy_name,
+        severity=rule_result.severity,
+    )
+    return decision, True
+
+
+def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[GuardDecision, bool]:
     """Resolve one failing rule to a `GuardDecision` plus whether execution
     should actually be blocked.
 
@@ -168,8 +196,13 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision,
     proceeds) from one that was denied or timed out (`should_block=True` —
     fail-safe). The ledger/span `decision` stays `"ESCALATE"` either way; the
     approval outcome is folded into the reason text.
+
+    Escalation handlers are only contacted in `enforce` mode — see
+    `_unresolved_escalation`.
     """
     if rule_result.on_fail is ESCALATE:
+        if mode != "enforce":
+            return _unresolved_escalation(rule_result, mode)
         handler = resolve_handler(rule_result.escalate_to)
         approved = _run_with_timeout(lambda: handler.escalate(ctx, rule_result), rule_result.timeout_s)
         suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
@@ -189,10 +222,12 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision,
     return decision, rule_result.on_fail is BLOCK
 
 
-async def _resolve_async(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision, bool]:
+async def _resolve_async(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[GuardDecision, bool]:
     """Async sibling of `_resolve` — identical semantics, but awaits escalation
     via `_run_with_timeout_async` instead of blocking a thread pool."""
     if rule_result.on_fail is ESCALATE:
+        if mode != "enforce":
+            return _unresolved_escalation(rule_result, mode)
         handler = resolve_handler(rule_result.escalate_to)
         approved = await _run_with_timeout_async(handler.escalate, ctx, rule_result)
         suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
@@ -327,7 +362,7 @@ def evaluate_call(
     worst_pre = pick_decision([r for r in pre_results if not r.passed])
     if worst_pre is not None:
         start = time.perf_counter()
-        decision, should_block = _resolve(worst_pre, ctx)
+        decision, should_block = _resolve(worst_pre, ctx, mode)
         latency_ms = (time.perf_counter() - start) * 1000
         _record(
             ctx=ctx,
@@ -360,7 +395,7 @@ def evaluate_call(
     worst_post = pick_decision([r for r in post_results if not r.passed])
     if worst_post is not None:
         start = time.perf_counter()
-        decision, should_block = _resolve(worst_post, ctx)
+        decision, should_block = _resolve(worst_post, ctx, mode)
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:
@@ -436,7 +471,7 @@ async def evaluate_call_async(
     worst_pre = pick_decision([r for r in pre_results if not r.passed])
     if worst_pre is not None:
         start = time.perf_counter()
-        decision, should_block = await _resolve_async(worst_pre, ctx)
+        decision, should_block = await _resolve_async(worst_pre, ctx, mode)
         latency_ms = (time.perf_counter() - start) * 1000
         _record(
             ctx=ctx,
@@ -469,7 +504,7 @@ async def evaluate_call_async(
     worst_post = pick_decision([r for r in post_results if not r.passed])
     if worst_post is not None:
         start = time.perf_counter()
-        decision, should_block = await _resolve_async(worst_post, ctx)
+        decision, should_block = await _resolve_async(worst_post, ctx, mode)
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:

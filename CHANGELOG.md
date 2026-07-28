@@ -12,6 +12,17 @@ Production-readiness hardening pass, following an adoption audit of the
 initial implementation.
 
 ### Fixed
+- **`dry_run`/`observe` fired real escalation side effects.** `_engine.py`
+  called `_resolve()` — which contacts the escalation handler — *before*
+  testing `mode == "enforce"`, so a supposedly no-op rollout would post to
+  Slack, hit the approval webhook, or block on `input()` for up to `timeout_s`
+  per call, exactly the opposite of what `examples/dry_run_rollout.py`
+  promises. Outside `enforce`, the engine now records the ESCALATE it *would*
+  have raised (reason suffixed `"(escalation not resolved — ... mode)"`)
+  without contacting any handler; the audit trail is unchanged.
+  **Breaking (behavior):** a registered handler is no longer invoked in
+  `dry_run`/`observe`. Code relying on that side effect must switch to
+  `enforce`.
 - **`NotPolicy` (`~policy`) incorrectly blocked on hooks the child policy
   doesn't apply to.** `PolicySet.evaluate()` always includes one `RuleResult`
   per matching rule, whether it passed or failed — an *empty* result
