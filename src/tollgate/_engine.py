@@ -308,6 +308,41 @@ def _record(
     return ActionLedger.current().record(event)
 
 
+def _undo_unavailable(reversible: ReversibleAction, decision: GuardDecision) -> tuple[None, GuardDecision]:
+    """Bookkeeping for a post-BLOCK on an action with no `undo_fn`.
+
+    `ReversibleAction.undo()` silently no-ops in that case, and the engine used
+    to record `"<name>.undo"` and `undo_executed=True` anyway — a false success
+    in the audit trail at exactly the moment nothing was reverted.
+    """
+    logger.warning(
+        "post-BLOCK on %r, which has no undo_fn — the action already ran and was NOT reverted",
+        reversible.name,
+    )
+    return None, replace(
+        decision, reason=f"{decision.reason} (no undo_fn configured — action NOT reverted)"
+    )
+
+
+def _undo_failed(
+    reversible: ReversibleAction, decision: GuardDecision, exc: Exception
+) -> tuple[str, GuardDecision]:
+    """Bookkeeping for an `undo_fn` that raised. Losing the ledger event here
+    would defeat the point of having one, so the failure is folded into the
+    record rather than propagated."""
+    logger.error(
+        "undo for %r failed after a post-BLOCK: %s: %s", reversible.name, type(exc).__name__, exc
+    )
+    return (
+        f"{reversible.name}.undo FAILED: {type(exc).__name__}: {exc}",
+        replace(decision, reason=f"{decision.reason} (undo also failed: {type(exc).__name__}: {exc})"),
+    )
+
+
+def _undo_succeeded(reversible: ReversibleAction, decision: GuardDecision) -> tuple[str, GuardDecision]:
+    return f"{reversible.name}.undo", replace(decision, undo_executed=True)
+
+
 def _aggregate_policy_name(names: list[str]) -> str | None:
     """Collapse the policies that contributed rules to one label: the single
     name if only one did, a `+`-joined label if several did, else `None`."""
@@ -435,22 +470,15 @@ def evaluate_call(
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:
-            try:
-                reversible.undo(args, snapshot)
-            except Exception as exc:
-                logger.error(
-                    "undo for %r failed after a post-BLOCK: %s: %s",
-                    reversible.name,
-                    type(exc).__name__,
-                    exc,
-                )
-                undo_op = f"{reversible.name}.undo FAILED: {type(exc).__name__}: {exc}"
-                decision = replace(
-                    decision, reason=f"{decision.reason} (undo also failed: {type(exc).__name__}: {exc})"
-                )
+            if not reversible.is_undoable:
+                undo_op, decision = _undo_unavailable(reversible, decision)
             else:
-                undo_op = f"{reversible.name}.undo"
-                decision = replace(decision, undo_executed=True)
+                try:
+                    reversible.undo(args, snapshot)
+                except Exception as exc:
+                    undo_op, decision = _undo_failed(reversible, decision, exc)
+                else:
+                    undo_op, decision = _undo_succeeded(reversible, decision)
         _record(
             ctx=ctx,
             decision=decision,
@@ -548,22 +576,15 @@ async def evaluate_call_async(
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:
-            try:
-                await _maybe_await(reversible.undo(args, snapshot))
-            except Exception as exc:
-                logger.error(
-                    "undo for %r failed after a post-BLOCK: %s: %s",
-                    reversible.name,
-                    type(exc).__name__,
-                    exc,
-                )
-                undo_op = f"{reversible.name}.undo FAILED: {type(exc).__name__}: {exc}"
-                decision = replace(
-                    decision, reason=f"{decision.reason} (undo also failed: {type(exc).__name__}: {exc})"
-                )
+            if not reversible.is_undoable:
+                undo_op, decision = _undo_unavailable(reversible, decision)
             else:
-                undo_op = f"{reversible.name}.undo"
-                decision = replace(decision, undo_executed=True)
+                try:
+                    await _maybe_await(reversible.undo(args, snapshot))
+                except Exception as exc:
+                    undo_op, decision = _undo_failed(reversible, decision, exc)
+                else:
+                    undo_op, decision = _undo_succeeded(reversible, decision)
         _record(
             ctx=ctx,
             decision=decision,

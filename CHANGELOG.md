@@ -23,6 +23,13 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **A post-BLOCK on an action with no `undo_fn` recorded a successful undo.**
+  `ReversibleAction.undo()` silently no-ops when `undo_fn is None`, but the
+  engine recorded `undo_op="<name>.undo"` and `undo_executed=True` regardless —
+  a false success in the audit trail at exactly the moment nothing was
+  reverted. The engine now checks the new `ReversibleAction.is_undoable`,
+  records `undo_op=None`, appends `"(no undo_fn configured — action NOT
+  reverted)"` to the reason, and logs a warning.
 - **`policy_hash` was never populated in any ledger event or span.** The field
   existed on `LedgerEvent`, the `tollgate.policy_hash` span attribute was
   emitted, and `PolicySet.policy_hash` was implemented and tested — but the

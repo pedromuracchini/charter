@@ -70,8 +70,20 @@ class ReversibleAction:
         """Capture pre-execution state, if a `pre_snapshot` function was given."""
         return self._pre_snapshot(args) if self._pre_snapshot is not None else None
 
+    @property
+    def is_undoable(self) -> bool:
+        """Whether calling `undo()` would actually revert anything.
+
+        The engine checks this before recording an undo: a `"low"` action with
+        no `undo_fn` silently no-ops, and recording `"<name>.undo"` for it would
+        put a false success in the audit trail at exactly the moment nothing
+        was reverted.
+        """
+        return self.undo_fn is not None
+
     def undo(self, args: dict[str, Any], snapshot: Any) -> Any:
-        """Revert this action. No-op if no `undo_fn` was configured."""
+        """Revert this action. No-op if no `undo_fn` was configured — check
+        `is_undoable` first if the caller needs to know which happened."""
         if self.undo_fn is None:
             return None
         return self.undo_fn(args, snapshot)

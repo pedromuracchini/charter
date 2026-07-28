@@ -251,3 +251,61 @@ def test_high_without_escalate_to_still_fails_safe():
     check = action.intrinsic_check()
     assert check is not None
     assert check.escalate_to is None
+
+
+def test_post_block_without_undo_fn_does_not_claim_a_successful_undo():
+    """undo() silently no-ops with no undo_fn, but the engine used to record
+    "<name>.undo" and undo_executed=True anyway — a false audit record at
+    exactly the moment nothing was reverted."""
+    action = ReversibleAction(
+        do_fn=lambda a: {"deleted": True},
+        undo_fn=None,
+        name="delete_thing",
+        irreversibility_level="low",
+    )
+    policy = PolicySet("post_blocks")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="result rejected", hook="post")
+
+    with pytest.raises(GuardBlocked) as excinfo:
+        evaluate_call(
+            tool_name="delete_thing",
+            args={},
+            invoke=lambda: action({}),
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+            reversible=action,
+        )
+
+    assert excinfo.value.decision.undo_executed is False
+    assert "NOT reverted" in excinfo.value.decision.reason
+
+    event = ActionLedger.current().events()[-1]
+    assert event.undo_op is None
+    assert "no undo_fn configured" in event.reason
+
+
+def test_post_block_with_undo_fn_still_records_the_undo():
+    undone = []
+    action = ReversibleAction(
+        do_fn=lambda a: {"deleted": True},
+        undo_fn=lambda a, s: undone.append(a),
+        name="delete_thing",
+        irreversibility_level="low",
+    )
+    policy = PolicySet("post_blocks")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="result rejected", hook="post")
+
+    with pytest.raises(GuardBlocked):
+        evaluate_call(
+            tool_name="delete_thing",
+            args={"id": 1},
+            invoke=lambda: action({"id": 1}),
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+            reversible=action,
+        )
+
+    assert undone == [{"id": 1}]
+    assert ActionLedger.current().events()[-1].undo_op == "delete_thing.undo"
