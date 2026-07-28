@@ -56,10 +56,14 @@ def configure_otel(
 
 
 def reset_otel() -> None:
-    """Disable OTEL emission. Intended for tests."""
+    """Disable OTEL emission and drop cached metric instruments. For tests."""
     global _settings
+    # Imported here, not at module scope: metrics.py imports from this module.
+    from tollgate.otel.metrics import reset_instruments
+
     with _lock:
         _settings = OtelSettings()
+    reset_instruments()
 
 
 def current_settings() -> OtelSettings:

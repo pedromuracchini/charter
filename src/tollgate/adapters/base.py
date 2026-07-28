@@ -79,17 +79,35 @@ _ADAPTERS: list[AgentAdapter] = []
 
 
 def register_adapter(adapter: AgentAdapter) -> None:
-    """Register a framework-specific adapter, tried (in registration order)
-    before falling back to `GenericAdapter`."""
+    """Register a framework-specific adapter, tried before `GenericAdapter`.
+
+    Most-recently-registered wins: adapters are prepended, so a later
+    registration shadows an earlier one that claims the same agent. Registering
+    the same adapter type twice replaces the earlier instance rather than
+    stacking a duplicate.
+    """
+    _ADAPTERS[:] = [a for a in _ADAPTERS if type(a) is not type(adapter)]
     _ADAPTERS.insert(0, adapter)
+
+
+def registered_adapters() -> list[AgentAdapter]:
+    """The adapters `wrap()` will try, in the order it tries them."""
+    return list(_ADAPTERS)
+
+
+def reset_adapters() -> None:
+    """Drop every registered adapter. Intended for tests — the module-level
+    registry is process-global and otherwise leaks between them."""
+    _ADAPTERS.clear()
 
 
 def wrap(agent: Any, interceptor: TollgateInterceptor) -> Any:
     """Wrap `agent`'s tools through `interceptor`.
 
-    Tries adapters registered via `register_adapter()` in order, falling back
-    to `GenericAdapter`. This is what `interceptor.use(agent)` calls, and what
-    the public `tollgate.wrap(agent, interceptor)` helper exposes directly.
+    Tries adapters registered via `register_adapter()` — most recently
+    registered first — falling back to `GenericAdapter`. This is what
+    `interceptor.use(agent)` calls, and what the public
+    `tollgate.wrap(agent, interceptor)` helper exposes directly.
     """
     for adapter in _ADAPTERS:
         if adapter.applies_to(agent):

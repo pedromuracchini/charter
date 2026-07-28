@@ -20,6 +20,16 @@ from tollgate.otel.config import current_settings, otel_available
 _instruments: dict[str, Any] = {}
 
 
+def reset_instruments() -> None:
+    """Drop the cached instruments so the next emission rebuilds them.
+
+    Called by `reset_otel()`: the cache binds instruments to the meter provider
+    that was active when they were created, so without this a test that swaps
+    providers keeps writing to the dead one.
+    """
+    _instruments.clear()
+
+
 def _meter() -> Any | None:
     settings = current_settings()
     if not (settings.enabled and otel_available()):

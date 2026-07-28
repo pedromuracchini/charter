@@ -64,6 +64,24 @@ def register_handler(scheme: str, handler: EscalationHandler) -> None:
     _HANDLERS[scheme] = handler
 
 
+def unregister_handler(scheme: str) -> EscalationHandler | None:
+    """Remove the handler registered for `scheme`, returning it if there was
+    one. Escalations to that scheme fall back to the fail-safe denier."""
+    return _HANDLERS.pop(scheme, None)
+
+
+def registered_handlers() -> dict[str, EscalationHandler]:
+    """A snapshot of the scheme → handler registry."""
+    return dict(_HANDLERS)
+
+
+def reset_handlers() -> None:
+    """Drop every registered handler, restoring the fail-safe default for all
+    schemes. Intended for tests — the registry is process-global and otherwise
+    leaks between them."""
+    _HANDLERS.clear()
+
+
 def resolve_handler(escalate_to: str | None) -> EscalationHandler:
     """Find the handler registered for `escalate_to`'s URI scheme, or the
     fail-safe default if none was registered (or `escalate_to` is `None`)."""

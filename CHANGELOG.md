@@ -30,6 +30,15 @@ initial implementation.
   and concurrent `popitem` could raise. `_wrapped_tools` was mutated unlocked
   too. Both are now guarded by a per-interceptor lock, held only for the dict
   updates and never across policy evaluation or the tool call.
+- **Process-global registries leaked between tests and had no way to be
+  cleared.** Added `unregister_handler()` / `registered_handlers()` /
+  `reset_handlers()` for the escalation registry, `registered_adapters()` /
+  `reset_adapters()` / `register_default_adapters()` for the adapter registry,
+  and made `reset_otel()` also drop the cached metric instruments (which bound
+  to whichever meter provider was live when first created). `register_adapter()`
+  now replaces a same-typed adapter instead of stacking duplicates, and its
+  docstring no longer claims registration order when the behavior is
+  most-recent-first.
 - **A post-BLOCK on an action with no `undo_fn` recorded a successful undo.**
   `ReversibleAction.undo()` silently no-ops when `undo_fn is None`, but the
   engine recorded `undo_op="<name>.undo"` and `undo_executed=True` regardless —

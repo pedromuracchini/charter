@@ -14,5 +14,17 @@ from tollgate.adapters.base import register_adapter
 from tollgate.adapters.langgraph import LangGraphAdapter
 from tollgate.adapters.openai_agents import OpenAIAgentsAdapter
 
-register_adapter(LangGraphAdapter())
-register_adapter(OpenAIAgentsAdapter())
+
+def register_default_adapters() -> None:
+    """(Re-)register the adapters that ship with real implementations.
+
+    Runs once on import. Exposed as a function so `reset_adapters()` has
+    something to restore: this module's import side effect can't fire twice,
+    so a test that clears the registry would otherwise leave every later test
+    without the built-in adapters.
+    """
+    register_adapter(LangGraphAdapter())
+    register_adapter(OpenAIAgentsAdapter())
+
+
+register_default_adapters()

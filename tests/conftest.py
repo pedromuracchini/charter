@@ -1,13 +1,25 @@
 import pytest
 
+from tollgate.adapters import register_default_adapters
+from tollgate.adapters.base import reset_adapters
+from tollgate.core.escalation import reset_handlers
 from tollgate.ledger.ledger import ActionLedger
 from tollgate.otel.config import reset_otel
 
 
+def _reset_all() -> None:
+    ActionLedger.reset()
+    reset_otel()
+    # The escalation-handler and adapter registries are process-global module
+    # state. Without this, a handler registered by one test resolves for every
+    # later test that uses the same URI scheme.
+    reset_handlers()
+    reset_adapters()
+    register_default_adapters()
+
+
 @pytest.fixture(autouse=True)
 def _reset_global_state():
-    ActionLedger.reset()
-    reset_otel()
+    _reset_all()
     yield
-    ActionLedger.reset()
-    reset_otel()
+    _reset_all()
