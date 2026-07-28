@@ -1,0 +1,45 @@
+"""`LedgerEvent` — the immutable record structure written for every decision."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from tollgate.decisions import Severity
+
+DecisionLabel = Literal["BLOCK", "ESCALATE", "ALLOW"]
+
+
+class LedgerEvent(BaseModel):
+    """One immutable entry in the `ActionLedger`.
+
+    Matches the framework's documented audit schema, including the fields that
+    are mandatory in multi-agent contexts (`caller_agent_id`, `caller_role`,
+    `delegation_chain`, `trust_level`).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str
+    ts: str
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    policy: str | None = None
+    decision: DecisionLabel
+    reason: str
+    severity: Severity = "medium"
+    hook: Literal["pre", "post"] = "pre"
+    mode: Literal["enforce", "dry_run", "observe"] = "enforce"
+    checksum_expected: str | None = None
+    checksum_got: str | None = None
+    undo_op: str | None = None
+    session_id: str = "default"
+    step_index: int = 0
+    caller_agent_id: str | None = None
+    caller_role: str | None = None
+    delegation_chain: list[str] = Field(default_factory=list)
+    trust_level: int = 0
+    policy_hash: str | None = None
+    otel_trace_id: str | None = None
+    otel_span_id: str | None = None

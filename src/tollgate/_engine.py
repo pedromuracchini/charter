@@ -1,0 +1,508 @@
+"""The core evaluation pipeline shared by `@guard` and `TollgateInterceptor`.
+
+Every guarded tool call funnels through `evaluate_call` (or its async sibling
+`evaluate_call_async`): build a `GuardContext`, run pre-hook rules (the worst
+failure wins, by precedence BLOCK > ESCALATE > ALLOW), resolve any escalation,
+execute (or not), run post-hook rules, auto-undo on a post-BLOCK when the call
+wraps a `ReversibleAction`, and record a ledger entry plus an OTEL span/metric
+for every hook actually evaluated.
+
+Sampling: a failing rule (BLOCK/ESCALATE/log-only ALLOW) is always recorded.
+When every applicable rule passes, a single aggregate ALLOW entry is recorded,
+sampled at `OtelSettings.allow_sample_rate` (default 1.0 — always).
+
+Async: predicates (`pre`/`post`, `active_when`, `applies_to`) are always sync
+— only tool invocation (`invoke`), `ReversibleAction.undo_fn`, and
+`EscalationHandler.escalate` may be async. `_maybe_await` lets a single
+`do_fn`/`undo_fn`/`escalate` be either `def` or `async def` without separate
+base classes.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import inspect
+import logging
+import random
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import Any
+
+from tollgate._scope import ExecutionScope
+from tollgate.core.context import GuardContext
+from tollgate.core.escalation import resolve_handler
+from tollgate.core.policy_set import Hook, Policy
+from tollgate.core.reversible import ReversibleAction
+from tollgate.decisions import (
+    ALLOW,
+    BLOCK,
+    ESCALATE,
+    GuardBlocked,
+    GuardDecision,
+    RuleResult,
+    pick_decision,
+)
+from tollgate.ledger.event import LedgerEvent
+from tollgate.ledger.ledger import ActionLedger
+from tollgate.otel.config import current_settings
+from tollgate.otel.metrics import record_decision
+from tollgate.otel.spans import evaluate_span
+
+logger = logging.getLogger("tollgate.reversible")
+_escalation_logger = logging.getLogger("tollgate.escalation")
+
+
+def _new_event_id() -> str:
+    return f"evt_{uuid.uuid4().hex[:8]}"
+
+
+def _is_cross_agent(ctx: GuardContext) -> bool:
+    """Heuristic: the call crossed at least one agent-to-agent delegation hop."""
+    return ctx.caller_agent_id is not None and len(ctx.delegation_chain) >= 2
+
+
+def _run_with_timeout(fn: Callable[[], bool | Awaitable[bool]], timeout_s: float) -> bool:
+    """Run `fn()` with a hard wall-clock timeout, denying (`False`) if it
+    raises or doesn't finish in time — enforces `RuleResult.timeout_s` on
+    escalation handlers that don't respect it themselves.
+
+    Uses a disposable single-worker thread pool rather than a `with` block:
+    `ThreadPoolExecutor.__exit__` blocks until the submitted task finishes,
+    which would defeat the timeout for a genuinely hung `fn`. On timeout, the
+    pool is shut down without waiting — the hung thread is abandoned to finish
+    (or not) on its own; accepted as a rare-case tradeoff for a misbehaving
+    handler, versus blocking the whole tool call indefinitely.
+
+    This is the *sync* path (`evaluate_call`) — an `async def escalate` used
+    here (instead of via `evaluate_call_async`/`_run_with_timeout_async`)
+    can't be awaited, so it's treated as a caller error and denied rather than
+    `bool()`-coercing the unawaited coroutine (which would be truthy and
+    silently approve everything).
+    """
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn)
+    try:
+        result = future.result(timeout=timeout_s)
+    except concurrent.futures.TimeoutError:
+        executor.shutdown(wait=False, cancel_futures=True)
+        _escalation_logger.warning(
+            "escalation handler exceeded timeout_s=%s — denying (fail-safe)", timeout_s
+        )
+        return False
+    except Exception as exc:
+        executor.shutdown(wait=True)
+        _escalation_logger.error(
+            "escalation handler raised %s: %s — denying (fail-safe)", type(exc).__name__, exc
+        )
+        return False
+    executor.shutdown(wait=True)
+    if inspect.isawaitable(result):
+        _escalation_logger.error(
+            "escalation handler is async but was invoked via the sync engine "
+            "(TollgateInterceptor.call() or @guard on a sync tool) — use acall()/an "
+            "async tool for an async escalate(); denying (fail-safe)"
+        )
+        close = getattr(result, "close", None)
+        if callable(close):
+            close()  # avoid a "coroutine was never awaited" warning for the abandoned result
+        return False
+    return bool(result)
+
+
+async def _maybe_await(value: Any) -> Any:
+    """`await value` if it's awaitable (a coroutine, mainly), else return it
+    as-is — lets `ReversibleAction.do_fn`/`undo_fn` be either `def` or
+    `async def` without a separate async-aware class."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _run_with_timeout_async(
+    handler_escalate: Callable[[GuardContext, RuleResult], bool | Awaitable[bool]],
+    ctx: GuardContext,
+    rule_result: RuleResult,
+) -> bool:
+    """Async sibling of `_run_with_timeout`, for `evaluate_call_async`.
+
+    A plain sync `escalate` would block the whole event loop if awaited
+    naively — `asyncio.wait_for`'s timeout can't fire while the loop itself is
+    blocked. So a sync `escalate` is dispatched to the default thread pool
+    executor (`loop.run_in_executor`), exactly like the sync engine's
+    `_run_with_timeout`; an `async def escalate` is awaited directly. Either
+    way, `asyncio.wait_for` enforces `rule_result.timeout_s`.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        if inspect.iscoroutinefunction(handler_escalate):
+            result = await asyncio.wait_for(
+                handler_escalate(ctx, rule_result), timeout=rule_result.timeout_s
+            )
+        else:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, handler_escalate, ctx, rule_result),
+                timeout=rule_result.timeout_s,
+            )
+    except TimeoutError:
+        _escalation_logger.warning(
+            "escalation handler exceeded timeout_s=%s — denying (fail-safe)", rule_result.timeout_s
+        )
+        return False
+    except Exception as exc:
+        _escalation_logger.error(
+            "escalation handler raised %s: %s — denying (fail-safe)", type(exc).__name__, exc
+        )
+        return False
+    return bool(result)
+
+
+def _resolve(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision, bool]:
+    """Resolve one failing rule to a `GuardDecision` plus whether execution
+    should actually be blocked.
+
+    Distinguishes an ESCALATE that was approved (`should_block=False`, the call
+    proceeds) from one that was denied or timed out (`should_block=True` —
+    fail-safe). The ledger/span `decision` stays `"ESCALATE"` either way; the
+    approval outcome is folded into the reason text.
+    """
+    if rule_result.on_fail is ESCALATE:
+        handler = resolve_handler(rule_result.escalate_to)
+        approved = _run_with_timeout(lambda: handler.escalate(ctx, rule_result), rule_result.timeout_s)
+        suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
+        decision = GuardDecision(
+            action=ESCALATE,
+            reason=rule_result.reason + suffix,
+            policy_name=rule_result.policy_name,
+            severity=rule_result.severity,
+        )
+        return decision, not approved
+    decision = GuardDecision(
+        action=rule_result.on_fail,
+        reason=rule_result.reason,
+        policy_name=rule_result.policy_name,
+        severity=rule_result.severity,
+    )
+    return decision, rule_result.on_fail is BLOCK
+
+
+async def _resolve_async(rule_result: RuleResult, ctx: GuardContext) -> tuple[GuardDecision, bool]:
+    """Async sibling of `_resolve` — identical semantics, but awaits escalation
+    via `_run_with_timeout_async` instead of blocking a thread pool."""
+    if rule_result.on_fail is ESCALATE:
+        handler = resolve_handler(rule_result.escalate_to)
+        approved = await _run_with_timeout_async(handler.escalate, ctx, rule_result)
+        suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
+        decision = GuardDecision(
+            action=ESCALATE,
+            reason=rule_result.reason + suffix,
+            policy_name=rule_result.policy_name,
+            severity=rule_result.severity,
+        )
+        return decision, not approved
+    decision = GuardDecision(
+        action=rule_result.on_fail,
+        reason=rule_result.reason,
+        policy_name=rule_result.policy_name,
+        severity=rule_result.severity,
+    )
+    return decision, rule_result.on_fail is BLOCK
+
+
+def _record(
+    *,
+    ctx: GuardContext,
+    decision: GuardDecision,
+    hook: Hook,
+    mode: str,
+    undo_op: str | None,
+    latency_ms: float,
+    tracer_provider: Any = None,
+) -> LedgerEvent:
+    with evaluate_span(
+        ctx,
+        decision,
+        hook,
+        dry_run=(mode != "enforce"),
+        latency_ms=latency_ms,
+        tracer_provider=tracer_provider,
+    ) as span_ids:
+        record_decision(decision, ctx.tool_name, latency_ms, _is_cross_agent(ctx))
+        event = LedgerEvent(
+            event_id=_new_event_id(),
+            ts=datetime.now(UTC).isoformat(),
+            tool=ctx.tool_name,
+            args=ctx.args,
+            policy=decision.policy_name,
+            decision=decision.action.value.upper(),  # type: ignore[arg-type]
+            reason=decision.reason,
+            severity=decision.severity,
+            hook=hook,
+            mode=mode,  # type: ignore[arg-type]
+            checksum_expected=ctx.state_checksum,
+            checksum_got=ctx.recompute_checksum(),
+            undo_op=undo_op,
+            session_id=ctx.session_id,
+            step_index=ctx.step_index,
+            caller_agent_id=ctx.caller_agent_id,
+            caller_role=ctx.caller_role,
+            delegation_chain=list(ctx.delegation_chain),
+            trust_level=ctx.trust_level,
+            policy_hash=decision.policy_hash,
+            otel_trace_id=span_ids[0] if span_ids else None,
+            otel_span_id=span_ids[1] if span_ids else None,
+        )
+    return ActionLedger.current().record(event)
+
+
+def _aggregate_policy_name(names: list[str]) -> str | None:
+    """Collapse the policies that contributed rules to one label: the single
+    name if only one did, a `+`-joined label if several did, else `None`."""
+    unique = sorted(set(names))
+    if not unique:
+        return None
+    return "+".join(unique)
+
+
+def _record_allow(
+    ctx: GuardContext, *, hook: Hook, mode: str, contributors: list[str], tracer_provider: Any = None
+) -> None:
+    settings = current_settings()
+    if random.random() > settings.allow_sample_rate:
+        return
+    decision = GuardDecision(
+        action=ALLOW, reason="all applicable rules passed", policy_name=_aggregate_policy_name(contributors)
+    )
+    _record(
+        ctx=ctx,
+        decision=decision,
+        hook=hook,
+        mode=mode,
+        undo_op=None,
+        latency_ms=0.0,
+        tracer_provider=tracer_provider,
+    )
+
+
+def evaluate_call(
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    invoke: Callable[[], Any],
+    policies: Sequence[Policy],
+    mode: str,
+    scope: ExecutionScope,
+    reversible: ReversibleAction | None = None,
+    tracer_provider: Any = None,
+) -> Any:
+    """Run one tool call through the full pre/execute/post pipeline.
+
+    Raises `GuardBlocked` in `"enforce"` mode if a pre-hook rule blocks the call
+    before it runs, or if a post-hook rule blocks after it already ran (after
+    attempting auto-undo, when `reversible` is set). In `"dry_run"`/`"observe"`
+    modes the call always proceeds and is never undone — rules are still
+    evaluated and every decision is still recorded.
+
+    `tracer_provider`, if given, overrides the globally configured OTEL tracer
+    provider for this call's spans (see `TollgateInterceptor.otel_tracer`).
+    """
+    ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+
+    pre_results: list[RuleResult] = []
+    pre_contributors: list[str] = []
+    if reversible is not None:
+        intrinsic = reversible.intrinsic_check()
+        if intrinsic is not None:
+            pre_results.append(intrinsic)
+            pre_contributors.append(intrinsic.policy_name)
+    for policy in policies:
+        policy_results = policy.evaluate(ctx, "pre")
+        if policy_results:
+            pre_contributors.append(policy.name)
+        pre_results.extend(policy_results)
+
+    worst_pre = pick_decision([r for r in pre_results if not r.passed])
+    if worst_pre is not None:
+        start = time.perf_counter()
+        decision, should_block = _resolve(worst_pre, ctx)
+        latency_ms = (time.perf_counter() - start) * 1000
+        _record(
+            ctx=ctx,
+            decision=decision,
+            hook="pre",
+            mode=mode,
+            undo_op=None,
+            latency_ms=latency_ms,
+            tracer_provider=tracer_provider,
+        )
+        if should_block and mode == "enforce":
+            raise GuardBlocked(decision)
+    elif pre_results:
+        _record_allow(
+            ctx, hook="pre", mode=mode, contributors=pre_contributors, tracer_provider=tracer_provider
+        )
+
+    snapshot = reversible.snapshot(args) if reversible is not None else None
+    result = invoke()
+    ctx.result = result
+
+    post_results: list[RuleResult] = []
+    post_contributors: list[str] = []
+    for policy in policies:
+        policy_results = policy.evaluate(ctx, "post")
+        if policy_results:
+            post_contributors.append(policy.name)
+        post_results.extend(policy_results)
+
+    worst_post = pick_decision([r for r in post_results if not r.passed])
+    if worst_post is not None:
+        start = time.perf_counter()
+        decision, should_block = _resolve(worst_post, ctx)
+        latency_ms = (time.perf_counter() - start) * 1000
+        undo_op = None
+        if should_block and mode == "enforce" and reversible is not None:
+            try:
+                reversible.undo(args, snapshot)
+            except Exception as exc:
+                logger.error(
+                    "undo for %r failed after a post-BLOCK: %s: %s",
+                    reversible.name,
+                    type(exc).__name__,
+                    exc,
+                )
+                undo_op = f"{reversible.name}.undo FAILED: {type(exc).__name__}: {exc}"
+                decision = replace(
+                    decision, reason=f"{decision.reason} (undo also failed: {type(exc).__name__}: {exc})"
+                )
+            else:
+                undo_op = f"{reversible.name}.undo"
+                decision = replace(decision, undo_executed=True)
+        _record(
+            ctx=ctx,
+            decision=decision,
+            hook="post",
+            mode=mode,
+            undo_op=undo_op,
+            latency_ms=latency_ms,
+            tracer_provider=tracer_provider,
+        )
+        if should_block and mode == "enforce":
+            raise GuardBlocked(decision)
+    elif post_results:
+        _record_allow(
+            ctx, hook="post", mode=mode, contributors=post_contributors, tracer_provider=tracer_provider
+        )
+
+    return result
+
+
+async def evaluate_call_async(
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    invoke: Callable[[], Awaitable[Any]],
+    policies: Sequence[Policy],
+    mode: str,
+    scope: ExecutionScope,
+    reversible: ReversibleAction | None = None,
+    tracer_provider: Any = None,
+) -> Any:
+    """Async sibling of `evaluate_call` — identical semantics and identical
+    ledger/OTEL behavior, for an `async def` tool function.
+
+    `invoke` is awaited instead of called. `ReversibleAction.undo_fn` may be
+    sync or async (see `_maybe_await`); `pre_snapshot` stays sync-only.
+    Predicates (`pre`/`post`, `active_when`, `applies_to`) are always sync —
+    see the module docstring.
+    """
+    ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+
+    pre_results: list[RuleResult] = []
+    pre_contributors: list[str] = []
+    if reversible is not None:
+        intrinsic = reversible.intrinsic_check()
+        if intrinsic is not None:
+            pre_results.append(intrinsic)
+            pre_contributors.append(intrinsic.policy_name)
+    for policy in policies:
+        policy_results = policy.evaluate(ctx, "pre")
+        if policy_results:
+            pre_contributors.append(policy.name)
+        pre_results.extend(policy_results)
+
+    worst_pre = pick_decision([r for r in pre_results if not r.passed])
+    if worst_pre is not None:
+        start = time.perf_counter()
+        decision, should_block = await _resolve_async(worst_pre, ctx)
+        latency_ms = (time.perf_counter() - start) * 1000
+        _record(
+            ctx=ctx,
+            decision=decision,
+            hook="pre",
+            mode=mode,
+            undo_op=None,
+            latency_ms=latency_ms,
+            tracer_provider=tracer_provider,
+        )
+        if should_block and mode == "enforce":
+            raise GuardBlocked(decision)
+    elif pre_results:
+        _record_allow(
+            ctx, hook="pre", mode=mode, contributors=pre_contributors, tracer_provider=tracer_provider
+        )
+
+    snapshot = reversible.snapshot(args) if reversible is not None else None
+    result = await invoke()
+    ctx.result = result
+
+    post_results: list[RuleResult] = []
+    post_contributors: list[str] = []
+    for policy in policies:
+        policy_results = policy.evaluate(ctx, "post")
+        if policy_results:
+            post_contributors.append(policy.name)
+        post_results.extend(policy_results)
+
+    worst_post = pick_decision([r for r in post_results if not r.passed])
+    if worst_post is not None:
+        start = time.perf_counter()
+        decision, should_block = await _resolve_async(worst_post, ctx)
+        latency_ms = (time.perf_counter() - start) * 1000
+        undo_op = None
+        if should_block and mode == "enforce" and reversible is not None:
+            try:
+                await _maybe_await(reversible.undo(args, snapshot))
+            except Exception as exc:
+                logger.error(
+                    "undo for %r failed after a post-BLOCK: %s: %s",
+                    reversible.name,
+                    type(exc).__name__,
+                    exc,
+                )
+                undo_op = f"{reversible.name}.undo FAILED: {type(exc).__name__}: {exc}"
+                decision = replace(
+                    decision, reason=f"{decision.reason} (undo also failed: {type(exc).__name__}: {exc})"
+                )
+            else:
+                undo_op = f"{reversible.name}.undo"
+                decision = replace(decision, undo_executed=True)
+        _record(
+            ctx=ctx,
+            decision=decision,
+            hook="post",
+            mode=mode,
+            undo_op=undo_op,
+            latency_ms=latency_ms,
+            tracer_provider=tracer_provider,
+        )
+        if should_block and mode == "enforce":
+            raise GuardBlocked(decision)
+    elif post_results:
+        _record_allow(
+            ctx, hook="post", mode=mode, contributors=post_contributors, tracer_provider=tracer_provider
+        )
+
+    return result
