@@ -23,10 +23,10 @@ Install the extra to use this: `uv sync --extra mcp`. Registered by default
 (see `tollgate.adapters`); `applies_to()` only attempts the optional `mcp`
 import lazily, inside the method body, so `import tollgate` never needs it.
 
-Known limitation, shared with the other adapters: tool arguments are handed to
-`interceptor.acall(name, fn, **arguments)`, whose own keyword-only
-`session_id`/`domain` parameters would swallow same-named tool arguments. MCP
-tools using those names are not guarded correctly; nothing else is affected.
+Tool arguments are forwarded as `interceptor.acall(name, fn, args={...})`
+rather than as `**arguments`, so a tool declaring an argument named
+`session_id` or `domain` reaches the tool intact instead of being swallowed by
+the interceptor's own parameters of those names.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from tollgate.adapters.base import AgentAdapter
 from tollgate.decisions import GuardBlocked
+from tollgate.errors import AdapterError, ConfigurationError
 
 if TYPE_CHECKING:
     from tollgate.core.interceptor import TollgateInterceptor
@@ -69,7 +70,7 @@ def guard_mcp_session(session: Any, interceptor: TollgateInterceptor) -> Any:
         async def inner(**_policy_args: Any) -> Any:
             return await original_call_tool(name, arguments, **kwargs)
 
-        return await interceptor.acall(name, inner, **(arguments or {}))
+        return await interceptor.acall(name, inner, args=arguments or {})
 
     session.call_tool = guarded_call_tool
     setattr(session, _GUARDED, True)
@@ -123,11 +124,13 @@ def guard_mcp_server(server: Any, interceptor: TollgateInterceptor) -> Any:
 
     handlers = getattr(low_level, "request_handlers", None)
     if handlers is None:
-        raise TypeError(f"{server!r} has no MCP request_handlers table to guard")
+        raise AdapterError(f"{server!r} has no MCP request_handlers table to guard")
 
     original_handler = handlers.get(types.CallToolRequest)
     if original_handler is None:
-        raise RuntimeError(
+        # A sequencing mistake, not a wrong-type one: the object is a server,
+        # it just has nothing to guard yet.
+        raise ConfigurationError(
             "no tools/call handler is registered yet — define the server's tools "
             "before wrapping it, otherwise there is nothing to guard"
         )
@@ -139,7 +142,7 @@ def guard_mcp_server(server: Any, interceptor: TollgateInterceptor) -> Any:
             return await original_handler(req)
 
         try:
-            return await interceptor.acall(req.params.name, inner, **arguments)
+            return await interceptor.acall(req.params.name, inner, args=arguments)
         except GuardBlocked as exc:
             return _blocked_result(exc)
 

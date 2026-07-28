@@ -43,13 +43,13 @@ def _wrap_tool(tool: BaseTool, interceptor: TollgateInterceptor) -> BaseTool:
         def inner(**kw: Any) -> Any:
             return tool.invoke(kw)
 
-        return interceptor.call(tool.name, inner, **kwargs)
+        return interceptor.call(tool.name, inner, args=kwargs)
 
     async def async_call(**kwargs: Any) -> Any:
         async def inner(**kw: Any) -> Any:
             return await tool.ainvoke(kw)
 
-        return await interceptor.acall(tool.name, inner, **kwargs)
+        return await interceptor.acall(tool.name, inner, args=kwargs)
 
     return StructuredTool.from_function(
         func=sync_call,

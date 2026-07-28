@@ -46,7 +46,7 @@ def _wrap_tool(tool: Any, interceptor: TollgateInterceptor) -> Any:
         async def inner(**kwargs: Any) -> Any:
             return await original_invoke(ctx, json.dumps(kwargs))
 
-        return await interceptor.acall(tool.name, inner, **parsed_args)
+        return await interceptor.acall(tool.name, inner, args=parsed_args)
 
     return dataclasses.replace(tool, on_invoke_tool=wrapped_invoke)
 
