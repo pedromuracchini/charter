@@ -8,13 +8,20 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from tollgate._scope import session
+from tollgate._scope import ExecutionScope, current_scope, session
 from tollgate.core.context import GuardContext
 from tollgate.core.decorator import guard
-from tollgate.core.escalation import EscalationHandler, register_handler
-from tollgate.core.interceptor import TollgateInterceptor
-from tollgate.core.policy_set import AndPolicy, NotPolicy, OrPolicy, Policy, PolicySet
-from tollgate.core.reversible import ReversibleAction
+from tollgate.core.escalation import (
+    EscalationHandler,
+    FailSafeEscalationHandler,
+    register_handler,
+    registered_handlers,
+    reset_handlers,
+    unregister_handler,
+)
+from tollgate.core.interceptor import Mode, TollgateInterceptor
+from tollgate.core.policy_set import AndPolicy, Hook, NotPolicy, OrPolicy, Policy, PolicySet
+from tollgate.core.reversible import IrreversibilityLevel, ReversibleAction
 from tollgate.decisions import (
     ALLOW,
     BLOCK,
@@ -23,16 +30,25 @@ from tollgate.decisions import (
     GuardBlocked,
     GuardDecision,
     RuleResult,
+    Severity,
+    pick_decision,
 )
 from tollgate.escalation.cli import CLIEscalationHandler
 from tollgate.escalation.slack import SlackEscalationHandler
 from tollgate.escalation.webhook import WebhookEscalationHandler
-from tollgate.ledger.event import LedgerEvent
+from tollgate.ledger.event import ContributingRule, LedgerEvent
 from tollgate.ledger.ledger import ActionLedger, ReplayResult, replay
-from tollgate.multiagent.delegation import extend_chain, max_delegation_depth_policy
+from tollgate.linter.linter import LintFinding, lint
+from tollgate.multiagent.delegation import (
+    delegation_depth,
+    extend_chain,
+    max_delegation_depth_policy,
+)
 from tollgate.multiagent.registry import AgentIdentity, TollgateRegistry
 from tollgate.multiagent.scoped_policy import AgentScopedPolicy
 from tollgate.otel.config import configure_otel
+from tollgate.report.policy_report import PolicyReport, build_report
+from tollgate.state import CallState
 
 try:
     __version__ = version("tollgate")
@@ -49,33 +65,51 @@ __all__ = [
     "AndPolicy",
     "BLOCK",
     "CLIEscalationHandler",
+    "CallState",
+    "ContributingRule",
     "Decision",
     "ESCALATE",
     "EscalationHandler",
+    "ExecutionScope",
+    "FailSafeEscalationHandler",
     "GuardBlocked",
     "GuardContext",
     "GuardDecision",
+    "Hook",
+    "IrreversibilityLevel",
     "LedgerEvent",
+    "LintFinding",
+    "Mode",
     "NotPolicy",
     "OrPolicy",
     "Policy",
+    "PolicyReport",
     "PolicySet",
     "ReplayResult",
     "ReversibleAction",
     "RuleResult",
+    "Severity",
     "SlackEscalationHandler",
     "TollgateInterceptor",
     "TollgateRegistry",
     "WebhookEscalationHandler",
     "__version__",
+    "build_report",
     "configure_ledger",
     "configure_otel",
+    "current_scope",
+    "delegation_depth",
     "extend_chain",
     "guard",
+    "lint",
     "max_delegation_depth_policy",
+    "pick_decision",
     "register_handler",
+    "registered_handlers",
     "replay",
+    "reset_handlers",
     "session",
+    "unregister_handler",
     "wrap",
 ]
 
