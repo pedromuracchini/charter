@@ -45,3 +45,27 @@ def test_uncovered_tools_detected():
     findings = lint([policy], tool_names=["delete_x", "read_y"])
     assert any("read_y" in f.message for f in findings)
     assert not any("delete_x" in f.message for f in findings)
+
+
+def test_flags_high_action_without_escalate_to():
+    from tollgate.core.reversible import ReversibleAction
+
+    unrouted = ReversibleAction(
+        do_fn=lambda a: a, undo_fn=None, name="wipe_db", irreversibility_level="high"
+    )
+    routed = ReversibleAction(
+        do_fn=lambda a: a,
+        undo_fn=None,
+        name="delete_bucket",
+        irreversibility_level="high",
+        escalate_to="slack://ops",
+    )
+    permanent = ReversibleAction(
+        do_fn=lambda a: a, undo_fn=None, name="nuke", irreversibility_level="permanent"
+    )
+
+    findings = lint([], actions=[unrouted, routed, permanent])
+
+    assert [f.policy_name for f in findings] == ["wipe_db"]
+    assert findings[0].severity == "warning"
+    assert "escalate_to" in findings[0].message

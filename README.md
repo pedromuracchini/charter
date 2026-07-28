@@ -149,6 +149,7 @@ delete_s3_bucket = ReversibleAction(
     undo_fn=lambda args, snapshot: s3.restore_from_snapshot(snapshot),
     name="delete_s3_bucket",
     irreversibility_level="high",   # auto-escalates before every execution
+    escalate_to="slack://infra-approvals",
     pre_snapshot=lambda args: s3.snapshot(args["bucket"]),
 )
 ```
@@ -156,6 +157,10 @@ delete_s3_bucket = ReversibleAction(
 `irreversibility_level`: `"low"` runs normally; `"medium"` requires `undo_fn` (raised
 at construction if missing); `"high"` auto-escalates before every call; `"permanent"`
 is an unconditional block — the action never runs.
+
+A `"high"` action needs an `escalate_to` target to differ from `"permanent"`:
+with none, its escalation resolves to the fail-safe handler, which denies, so
+every call is blocked. `tollgate lint` warns about this.
 
 ## Examples
 
@@ -189,7 +194,8 @@ uv run tollgate repl --agent my_agent.py                          # synthetic-co
 ```
 
 The CLI loads `my_agent.py` as a plain module and expects a module-level
-`POLICIES: list[Policy]` (and, optionally, `REGISTRY` / `TOOL_NAMES`) — see
+`POLICIES: list[Policy]` (and, optionally, `REGISTRY` / `TOOL_NAMES` /
+`ACTIONS`) — see
 `examples/clinical.py`.
 
 ## Development

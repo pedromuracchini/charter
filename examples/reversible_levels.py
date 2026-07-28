@@ -7,11 +7,29 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import GuardBlocked, ReversibleAction, TollgateInterceptor
+from tollgate import (
+    EscalationHandler,
+    GuardBlocked,
+    ReversibleAction,
+    TollgateInterceptor,
+    register_handler,
+)
 
 _inventory: dict[int, dict] = {1: {"name": "widget", "qty": 10}}
 
 interceptor = TollgateInterceptor(policies=[])
+
+
+class ApproveEverything(EscalationHandler):
+    """Stands in for a real approval channel so this file runs with no setup.
+    See examples/real_escalation_handlers.py for Slack/webhook/CLI."""
+
+    def escalate(self, ctx, rule_result) -> bool:
+        print(f"  [escalation] approving {ctx.tool_name!r}: {rule_result.reason}")
+        return True
+
+
+register_handler("demo-approvals", ApproveEverything())
 
 
 def _never_called(args: dict) -> dict:
@@ -53,19 +71,27 @@ def main() -> None:
     )
     demo(medium, {"id": 1})
 
-    # "high": always escalates before executing. Note: ReversibleAction has
-    # no `escalate_to` of its own, so this always routes to the default
-    # fail-safe handler and is always denied — there is currently no way to
-    # configure a custom EscalationHandler for the built-in "high" check. If
-    # you need *configurable* approval for a destructive action, wrap it with
-    # @guard's own escalate_to instead — see examples/custom_escalation_handler.py.
+    # "high": always escalates before executing, routed to `escalate_to`.
     high = ReversibleAction(
         do_fn=lambda a: {"deleted": a["id"]},
         undo_fn=None,
         name="delete_bucket_high",
         irreversibility_level="high",
+        escalate_to="demo-approvals://infra",
     )
     demo(high, {"id": "my-bucket"})
+
+    # ...and the same action with no `escalate_to`: its escalation resolves to
+    # the fail-safe handler, which denies, so it behaves exactly like
+    # "permanent". `tollgate lint` warns about this — it is almost never what
+    # picking "high" over "permanent" was meant to express.
+    unrouted = ReversibleAction(
+        do_fn=lambda a: {"deleted": a["id"]},
+        undo_fn=None,
+        name="delete_bucket_unrouted",
+        irreversibility_level="high",
+    )
+    demo(unrouted, {"id": "my-bucket"})
 
     # "permanent": unconditional block. do_fn is never called, no matter what.
     permanent = ReversibleAction(

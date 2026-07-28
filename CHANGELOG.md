@@ -23,6 +23,14 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **`ReversibleAction(irreversibility_level="high")` could never escalate.**
+  Its intrinsic `RuleResult` was built with `escalate_to=None`, which
+  `resolve_handler` maps to the fail-safe denier — so `"high"` was in practice
+  a synonym for `"permanent"`, contradicting the documented "auto-escalates
+  before every execution". `ReversibleAction` now takes `escalate_to` and
+  `timeout_s` and propagates both into the intrinsic check. `tollgate lint`
+  gained a warning for a `"high"` action with no `escalate_to`, fed by an
+  optional module-level `ACTIONS: list[ReversibleAction]`.
 - **`NotPolicy` (`~policy`) incorrectly blocked on hooks the child policy
   doesn't apply to.** `PolicySet.evaluate()` always includes one `RuleResult`
   per matching rule, whether it passed or failed — an *empty* result

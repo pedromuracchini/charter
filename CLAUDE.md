@@ -348,7 +348,8 @@ into `/tests` would remove it from every installed copy of the library.
 `tollgate report` / `lint` / `repl` load the target file as a plain Python
 module (`importlib.util`) and look for two conventional module-level names:
 `POLICIES: list[Policy]` (required) and, optionally, `REGISTRY:
-TollgateRegistry` / `TOOL_NAMES: list[str]`. This is not enforced by any base
+TollgateRegistry` / `TOOL_NAMES: list[str]` / `ACTIONS: list[ReversibleAction]`
+(the last one only feeds `lint`'s `"high"`-without-`escalate_to` check). This is not enforced by any base
 class — it's just what `cli/main.py` greps for. See `examples/clinical.py` for
 the convention in practice. `tollgate report --ledger path.jsonl` merges
 events from a JSONL ledger sink file (written via

@@ -13,6 +13,7 @@ from typing import Literal
 from tollgate._scope import ExecutionScope
 from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import Policy, PolicySet
+from tollgate.core.reversible import ReversibleAction
 from tollgate.multiagent.registry import TollgateRegistry
 from tollgate.multiagent.scoped_policy import AgentScopedPolicy
 
@@ -30,6 +31,7 @@ def lint(
     policies: list[Policy],
     tool_names: list[str] | None = None,
     registry: TollgateRegistry | None = None,
+    actions: list[ReversibleAction] | None = None,
 ) -> list[LintFinding]:
     findings: list[LintFinding] = []
     findings.extend(_check_dead_policies(policies))
@@ -37,6 +39,8 @@ def lint(
     findings.extend(_check_scoped_policy_without_registry(policies, registry))
     if tool_names is not None:
         findings.extend(_check_uncovered_tools(policies, tool_names))
+    if actions is not None:
+        findings.extend(_check_high_action_without_escalate_to(actions))
     return findings
 
 
@@ -86,6 +90,28 @@ def _check_scoped_policy_without_registry(
                 )
             )
     return findings
+
+
+def _check_high_action_without_escalate_to(actions: list[ReversibleAction]) -> list[LintFinding]:
+    """A `"high"` action with no `escalate_to` collapses into `"permanent"`.
+
+    Its intrinsic ESCALATE resolves to `FailSafeEscalationHandler`, which always
+    denies — so the action can never run, which is almost certainly not what
+    picking `"high"` over `"permanent"` was meant to express.
+    """
+    return [
+        LintFinding(
+            severity="warning",
+            message=(
+                f"ReversibleAction '{action.name}' is irreversibility_level='high' but has no "
+                "escalate_to — its escalation always resolves to the fail-safe denier, making it "
+                "behave like 'permanent'"
+            ),
+            policy_name=action.name,
+        )
+        for action in actions
+        if action.irreversibility_level == "high" and action.escalate_to is None
+    ]
 
 
 def _check_uncovered_tools(policies: list[Policy], tool_names: list[str]) -> list[LintFinding]:

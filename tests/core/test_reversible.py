@@ -193,3 +193,61 @@ async def test_evaluate_call_async_permanent_blocks_without_calling_do_fn():
             reversible=action,
         )
     assert calls == []
+
+
+def test_high_routes_its_intrinsic_escalation_to_escalate_to():
+    """Without this, "high" is indistinguishable from "permanent": the intrinsic
+    ESCALATE resolves to the fail-safe denier and the action can never run."""
+    action = ReversibleAction(
+        do_fn=lambda a: a,
+        undo_fn=None,
+        name="x",
+        irreversibility_level="high",
+        escalate_to="approvals://bucket-deletions",
+        timeout_s=42,
+    )
+    check = action.intrinsic_check()
+    assert check is not None
+    assert check.escalate_to == "approvals://bucket-deletions"
+    assert check.timeout_s == 42
+
+
+def test_high_with_an_approving_handler_actually_executes():
+    from tollgate.core.escalation import EscalationHandler, register_handler
+
+    class Approve(EscalationHandler):
+        def escalate(self, ctx, rule_result):
+            return True
+
+    register_handler("high-approve-scheme", Approve())
+
+    calls = []
+    action = ReversibleAction(
+        do_fn=lambda a: calls.append(a),
+        undo_fn=None,
+        name="delete_bucket",
+        irreversibility_level="high",
+        escalate_to="high-approve-scheme://ops",
+    )
+
+    evaluate_call(
+        tool_name="delete_bucket",
+        args={"bucket": "b"},
+        invoke=lambda: action({"bucket": "b"}),
+        policies=[],
+        mode="enforce",
+        scope=current_scope(),
+        reversible=action,
+    )
+
+    assert calls == [{"bucket": "b"}]
+
+
+def test_high_without_escalate_to_still_fails_safe():
+    """The old behavior stays the default — an unrouted escalation denies."""
+    action = ReversibleAction(
+        do_fn=lambda a: a, undo_fn=None, name="x", irreversibility_level="high"
+    )
+    check = action.intrinsic_check()
+    assert check is not None
+    assert check.escalate_to is None

@@ -107,7 +107,8 @@ def _cmd_lint(args: argparse.Namespace) -> None:
     policies = _policies_from_module(module)
     registry: TollgateRegistry | None = getattr(module, "REGISTRY", None)
     tool_names = getattr(module, "TOOL_NAMES", None)
-    findings = lint_policies(policies, tool_names=tool_names, registry=registry)
+    actions = getattr(module, "ACTIONS", None)
+    findings = lint_policies(policies, tool_names=tool_names, registry=registry, actions=actions)
     if not findings:
         print("no issues found")
         return
