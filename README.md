@@ -228,6 +228,7 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `tollgate[openai-agents]`). |
 | `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `tollgate[mcp]`). |
 | `builtin_policies.py` | Every policy in `tollgate.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
+| `redaction.py` | Keeping secrets and PII out of the ledger, the JSONL sink, the exports and the Slack message. |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
 ## Audit trail
@@ -245,6 +246,35 @@ tollgate.configure_ledger(sink_path="/var/log/tollgate/decisions.jsonl")
 
 Every event is mirrored to that file regardless of the in-memory cap, and
 `tollgate report --ledger /var/log/tollgate/decisions.jsonl` reads it back.
+
+### Redaction
+
+Tool arguments reach the ledger, that JSONL file, the JSON/CSV exports and the
+escalation message posted to Slack. **Credential-shaped values are scrubbed
+out of all of them by default**, along with values under names like
+`password` / `api_key` / `authorization`:
+
+```python
+interceptor.call("call_api", call_api, authorization="Bearer AKIAIOSFODNN7EXAMPLE")
+# ledger: {"authorization": "[REDACTED]"}
+```
+
+Policies still evaluate against the **real** arguments — redaction happens at
+record time, so a policy that inspects a credential can still see it. PII
+patterns (email, SSN, IBAN, Luhn-checked card numbers) are opt-in, because an
+email address is often the point of the call:
+
+```python
+tollgate.configure_redaction(include_pii=True, keys=["mrn", "dob"])
+tollgate.configure_redaction(enabled=False)          # off entirely
+tollgate.configure_redaction(redactor=MyDLPClient())  # your own scrubber
+```
+
+One tradeoff: `tollgate.replay()` reconstructs its context from the stored
+event, so replaying a redacted call feeds placeholders to the predicates.
+`ReplayResult.redacted` flags it, and `export --format fixtures` skips those
+events instead of emitting tests that cannot pass. Run
+`uv run python examples/redaction.py` for the whole picture.
 
 ## CLI
 

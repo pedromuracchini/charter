@@ -45,10 +45,26 @@ explicit about:
   If you implement your own `EscalationHandler` instead, the same rule
   applies: make sure it authenticates its approval source — Tollgate has no
   opinion on how you verify "a human approved this."
-- **`ActionLedger`'s JSONL sink (`sink_path`) is plain-text and unencrypted**,
-  and may contain tool call arguments (`ctx.args`) verbatim. Don't pass
-  secrets as tool arguments if the ledger sink isn't stored somewhere
-  access-controlled.
+- **Tool arguments are redacted before they are recorded, but redaction is
+  best-effort.** Values matching a known credential shape, and values under
+  names like `password`/`api_key`/`authorization`, are replaced before they
+  reach the ledger, the JSONL sink, the compliance exports or an escalation
+  message (see `tollgate.redaction`). PII patterns are opt-in via
+  `configure_redaction(include_pii=True)`. This is pattern matching, not
+  classification: a credential in a shape Tollgate doesn't recognise, or an
+  identifier under a name it doesn't know, is recorded verbatim. Add your own
+  with `keys=` / `extra_patterns=`, or plug in a real DLP scrubber via
+  `configure_redaction(redactor=...)`.
+- **`ActionLedger`'s JSONL sink (`sink_path`) is plain-text and unencrypted.**
+  Redaction reduces what ends up there; it does not make the file safe to
+  leave world-readable. Store it somewhere access-controlled, and treat it as
+  sensitive regardless — tool names, caller identities, session ids and
+  argument *structure* are all still present.
+- **Policies see unredacted arguments, by design.** A predicate written to
+  check a credential has to be able to see one. Redaction applies to what is
+  written, not to what is evaluated — so a malicious or buggy predicate can
+  still observe (and, if it does I/O, exfiltrate) raw argument values. This is
+  the same trust boundary as "predicates are unsandboxed", above.
 
 ## Supported versions
 

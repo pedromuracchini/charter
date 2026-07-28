@@ -293,6 +293,53 @@ Two supported patterns:
   `AgentScopedPolicy` with `allowed_roles` set. `tollgate lint` flags this as
   an `error`-severity finding.
 
+### Redaction happens at record time, never at evaluation time
+
+`src/tollgate/redaction.py` scrubs secrets and PII on the way *into* durable
+storage. The ordering is the whole design:
+
+**evaluate against real values → redact → write.**
+
+Policies must see the true `ctx.args` — a predicate written to check a
+credential cannot check a placeholder — so `redact_args()` is called inside
+`_engine._record()` / `_record_tool_error()`, after every rule has run and at
+the last moment before the values become durable. `ctx.args` is never
+rewritten.
+
+Five sinks are covered, which is the point: the in-memory ledger, the JSONL
+`sink_path`, the JSON/CSV compliance exports (both projections of the ledger,
+so redacted for free), and `escalation/_message.py` — the least controlled
+destination of all, since it lands in a Slack channel with its own membership.
+Free-text fields (`reason`, `undo_op`, each `contributing_rules` entry) are
+scrubbed too: a fail-closed predicate folds its exception text into the
+reason, and exception text routinely quotes the argument that broke it.
+
+Two mechanisms, catching different things:
+- **By key name** (`DEFAULT_SENSITIVE_KEYS`) — an argument called `password`
+  is replaced wholesale, because its value may be ordinary-looking text no
+  pattern would match.
+- **By pattern** (`SECRET_PATTERNS`) — only the matching span is replaced, so
+  the surrounding text stays readable. Nested dicts/lists/tuples are walked.
+
+**Secrets are on by default; PII is not.** A credential in the ledger has no
+upside and the secret patterns are anchored on literal markers, so false
+positives are rare. `PII_PATTERNS` (email, SSN, IBAN, IP, formatted phone,
+Luhn-checked cards) are much likelier to match something a policy legitimately
+reasons about — an email address is often the point of the call — so
+`include_pii=True` is a deliberate choice. Card numbers are Luhn-validated
+before redaction; without that check any 16-digit order number would be eaten.
+
+`policies/secrets.py` and this module share one `SECRET_PATTERNS` tuple,
+defined here. They are different jobs — one *blocks the call*, the other
+*scrubs the record* of calls that proceeded — and adding a pattern improves
+both at once.
+
+**The tradeoff, stated honestly:** `replay()` rebuilds its context from the
+stored event, so replaying a redacted call evaluates policies against
+placeholders. `ReplayResult.redacted` flags it and a warning is logged;
+`fixtures_from_events` emits `@pytest.mark.skip` for those events rather than
+generating tests that cannot pass, or dropping them and overstating coverage.
+
 ### `tollgate.policies` — the shipped policy library
 
 `src/tollgate/policies/` holds tested, versioned implementations of the rules
@@ -523,10 +570,12 @@ per-event counters/histograms (`otel/config.py` degrades to no-ops without
 linter (dead policies, duplicate names, the scoped-policy-without-registry
 anti-pattern, uncovered tools), a ledger-driven pytest fixture generator, a
 minimal synthetic-context REPL, and the `tollgate` CLI
-(`report`/`lint`/`replay`/`repl`). Compliance/audit data is exportable as
-JSON, CSV, DOT, Mermaid, and a natural-language narrative — deliberately not
-as PDF; those formats cover the "get this data out in a reviewable form" need
-without a PDF-rendering dependency. Policy predicates, `ReversibleAction.undo`,
+(`report`/`lint`/`replay`/`repl`/`export`). Compliance/audit data is
+exportable as JSON, CSV, DOT, Mermaid, and a natural-language narrative —
+deliberately not as PDF; those formats cover the "get this data out in a
+reviewable form" need without a PDF-rendering dependency. Secrets are redacted
+out of every one of them by default and PII on request (see "Redaction happens
+at record time", above). Policy predicates, `ReversibleAction.undo`,
 and `EscalationHandler.escalate` all fail closed on an exception rather than
 crashing the guarded call or losing the ledger entry (see "A policy predicate
 ... can never crash the call it's guarding", above); `RuleResult.timeout_s` on

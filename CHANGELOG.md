@@ -125,6 +125,33 @@ initial implementation.
   Now: an empty child result makes `NotPolicy` not-applicable too (`[]`).
 
 ### Added
+- **Redaction of secrets and PII on the way into the audit trail**
+  (`tollgate.redaction`). Tool arguments previously reached the in-memory
+  ledger, the JSONL sink on disk, the JSON/CSV exports and the Slack
+  escalation message completely verbatim, so an agent passing an API key
+  leaked it into all four at once.
+  **Breaking (default behavior):** credential-shaped values and values under
+  names like `password`/`api_key`/`authorization` are now replaced with
+  `[REDACTED]` before being recorded. Free-text fields (`reason`, `undo_op`,
+  `contributing_rules[].reason`) are scrubbed too, since a fail-closed
+  predicate folds exception text — which routinely quotes the offending
+  argument — into the reason.
+  Redaction happens at *record* time: policies still evaluate against the real
+  `ctx.args`, or a predicate written to check a credential could not check it.
+  PII patterns (email, SSN, IBAN, IP, formatted phone, Luhn-validated card
+  numbers) are opt-in. Configure with
+  `tollgate.configure_redaction(enabled=..., keys=..., include_pii=...,
+  extra_patterns=..., redactor=...)`; pass your own `Redactor` to delegate to
+  an existing DLP service.
+  Consequence: `replay()` rebuilds its context from the stored event, so
+  replaying a redacted call evaluates policies against placeholders.
+  `ReplayResult.redacted` flags this and logs a warning, and
+  `fixtures_from_events` emits `@pytest.mark.skip` for those events rather
+  than generating tests that cannot pass.
+- **Escalation summaries are capped at `MAX_ARGS_CHARS` (2,000).** Slack
+  rejects a message over 40,000 characters outright, so a tool with a large
+  payload would previously turn every escalation on it into a silent delivery
+  failure.
 - **CLI: `--version`, `report --fail-under`, and an `export` command.**
   `report` always exited 0, so it was useless as a CI gate; `--fail-under
   RATIO` now exits non-zero when tool coverage falls below the threshold (the
