@@ -1,0 +1,9 @@
+# Default owner for everything in the repo.
+*       @tollgate-dev
+
+# The evaluation engine is the single chokepoint every guarded call runs
+# through, and the security posture is documented policy — both warrant a
+# deliberate look rather than a routine one.
+/src/tollgate/_engine.py        @tollgate-dev
+/src/tollgate/core/             @tollgate-dev
+/SECURITY.md                    @tollgate-dev

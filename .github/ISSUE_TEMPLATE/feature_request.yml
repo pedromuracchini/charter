@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a capability Tollgate does not have
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the "Scope: what's implemented vs. deferred" section of
+        [CLAUDE.md](../blob/main/CLAUDE.md) first — several things are absent
+        on purpose, with the reasoning written down.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to authorize, audit or reverse that you can't today?
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: Policies are plain Python, so there is usually *some* workaround. What is it, and where does it fall short?
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: An API sketch, if you have one in mind.
+      render: python
