@@ -275,6 +275,19 @@ Two supported patterns:
 - **Pattern 2 (many/dynamic agents):** one shared `TollgateRegistry` that
   multiple interceptors all reference by `agent_id`, instead of duplicating
   role/policy wiring per interceptor.
+- **`delegation_chain` has one convention: register ancestors, read the full
+  path.** `TollgateRegistry.register(delegation_chain=...)` takes the agent's
+  *ancestors only*; `TollgateInterceptor._self_inclusive_chain()` appends the
+  acting `agent_id` when building the `ExecutionScope`, so every
+  `GuardContext`, ledger event and graph sees the complete lineage
+  (`["orchestrator", "executor_agent"]` — the shape the ledger documents).
+  The two used to disagree: `report/graph.py`'s `zip(chain, chain[1:])` drew
+  **zero** edges for a direct parent→child hop, and `_is_cross_agent` never
+  fired on a single delegation. `delegation_depth()` counts *hops*
+  (`len(chain) - 1`), which is why appending the agent didn't shift any
+  existing `max_delegation_depth_policy` threshold. A chain that already ends
+  with the agent's own id is left alone, so code written against the old
+  convention keeps working.
 - **Anti-pattern:** a `TollgateInterceptor` with no `agent_id` (or no
   registry) leaves `ctx.caller_role` always `None`, silently defeating any
   `AgentScopedPolicy` with `allowed_roles` set. `tollgate lint` flags this as
@@ -449,26 +462,6 @@ handlers", below) — plus the LangGraph and OpenAI Agents SDK framework
 adapters (see "Real framework adapters", above). Packaging: `LICENSE`
 (Apache-2.0), GitHub Actions CI (lint/typecheck/test across Python
 3.11–3.13, then build), `CONTRIBUTING.md`, `SECURITY.md`.
-
-**Known inconsistency (not yet fixed):** `TollgateRegistry.register(delegation_chain=...)` and
-`TollgateInterceptor._build_scope()` treat the registered chain as
-*ancestors-only* (excluding the agent's own id — see `examples/delegation_chain.py`),
-but `report/graph.py`'s `_delegation_edges()` (and its own test fixture in
-`tests/report/test_report.py`) assumes the chain is *self-inclusive* (the
-acting agent's id as the last element — matching the ledger's documented
-`"delegation_chain": ["orchestrator", "executor_agent"]` shape). Under the
-ancestors-only convention actually used by the registry, a direct
-parent→child relationship (chain length 1) produces **zero** agent-to-agent
-edges in `export_delegation_graph()` — `zip(chain, chain[1:])` on a
-single-element tuple yields nothing. `examples/multi_agent_orchestrator.py`
-works around this today by registering self-inclusive chains explicitly (and
-says so in its docstring); `max_delegation_depth_policy`-only use cases
-(`examples/delegation_chain.py`) are unaffected either way, since that policy
-just counts list length and doesn't care what the strings mean. The clean
-fix would be for `_build_scope()` to auto-append `self.agent_id` to
-`identity.delegation_chain` when building the `ExecutionScope` — not done
-here to avoid silently shifting `max_delegation_depth_policy` thresholds by
-one hop for every existing caller.
 
 Deferred or intentionally out of scope:
 - **Live OTEL gauges** for `block_rate`/`escalate_rate`/`coverage_ratio` —

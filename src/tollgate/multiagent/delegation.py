@@ -9,8 +9,15 @@ from tollgate.multiagent.scoped_policy import AgentScopedPolicy
 
 
 def delegation_depth(ctx: GuardContext) -> int:
-    """Number of hops in `ctx.delegation_chain`."""
-    return len(ctx.delegation_chain)
+    """Number of agent-to-agent *hops* the call crossed to get here.
+
+    `ctx.delegation_chain` is the full path including the acting agent (see
+    `TollgateInterceptor._self_inclusive_chain`), so a call an agent makes
+    directly is depth 0, one delegation hop is depth 1, and so on. Counting
+    hops rather than chain entries is what keeps `max_delegation_depth_policy`
+    thresholds meaning the same thing they always did.
+    """
+    return max(0, len(ctx.delegation_chain) - 1)
 
 
 def extend_chain(chain: tuple[str, ...], agent_id: str) -> tuple[str, ...]:

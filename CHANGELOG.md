@@ -23,6 +23,19 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **`delegation_chain` had two contradictory conventions, so direct
+  delegations drew no graph edges.** The registry and `_build_scope()` treated
+  the chain as ancestors-only, while `report/graph.py`'s
+  `zip(chain, chain[1:])` and the ledger's documented
+  `["orchestrator", "executor_agent"]` shape assumed it included the acting
+  agent — a parent→child hop is a one-element tuple under the former, which
+  yields zero edges. `_is_cross_agent` never fired on a single hop either.
+  `TollgateInterceptor` now appends its own `agent_id` when building the
+  scope (leaving an already self-inclusive chain alone, so the
+  `examples/multi_agent_orchestrator.py` workaround keeps working), and
+  `delegation_depth()` counts hops (`len - 1`) rather than entries — so every
+  existing `max_delegation_depth_policy` threshold keeps its meaning. Callers
+  register ancestors only; everything downstream reads the full path.
 - **ALLOW events were sampled twice, and ESCALATE spans used the wrong rate.**
   `_record_allow()` rolled against `allow_sample_rate` for the ledger, then
   `evaluate_span()` rolled again at the same rate — the effective span rate was

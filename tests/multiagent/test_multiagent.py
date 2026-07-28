@@ -1,6 +1,8 @@
-from tollgate._scope import ExecutionScope
+from tollgate._scope import ExecutionScope, current_scope
 from tollgate.core.context import GuardContext
+from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.decisions import ALLOW, BLOCK, ESCALATE
+from tollgate.ledger.ledger import ActionLedger
 from tollgate.multiagent.delegation import delegation_depth, extend_chain, max_delegation_depth_policy
 from tollgate.multiagent.registry import TollgateRegistry
 from tollgate.multiagent.scoped_policy import AgentScopedPolicy
@@ -26,9 +28,18 @@ def test_agent_scoped_policy_blocks_disallowed_role():
     assert not failing2
 
 
+def test_delegation_depth_counts_hops_not_chain_entries():
+    """The chain is self-inclusive, so a call an agent makes directly is depth
+    0 — otherwise every threshold would silently shift by one hop."""
+    assert delegation_depth(_ctx(delegation_chain=())) == 0
+    assert delegation_depth(_ctx(delegation_chain=("solo_agent",))) == 0
+    assert delegation_depth(_ctx(delegation_chain=("orchestrator", "executor"))) == 1
+    assert delegation_depth(_ctx(delegation_chain=("a", "b", "c", "d"))) == 3
+
+
 def test_max_delegation_depth_policy():
     policy = max_delegation_depth_policy(2)
-    ctx = _ctx(delegation_chain=("orchestrator", "research_agent", "writer_agent"))
+    ctx = _ctx(delegation_chain=("orchestrator", "research_agent", "writer_agent", "sub_agent"))
     assert delegation_depth(ctx) == 3
     failing = [r for r in policy.evaluate(ctx, "pre") if not r.passed]
     assert failing
@@ -86,3 +97,64 @@ def test_agent_scoped_policy_applies_to_exception_treats_as_active():
     results = policy.evaluate(_ctx(), "pre")
     assert len(results) == 1
     assert results[0].passed is True
+
+
+def test_scope_chain_includes_the_acting_agent():
+    """The registry records ancestors only, but every consumer of the chain —
+    the delegation graph's zip(chain, chain[1:]), _is_cross_agent, the ledger's
+    documented shape — reads it as the full path."""
+    registry = TollgateRegistry()
+    registry.register("orchestrator", role="orchestrator")
+    registry.register("executor", role="worker", delegation_chain=("orchestrator",))
+
+    seen = {}
+
+    def probe():
+        seen.update(chain=list(current_scope().delegation_chain))
+
+    TollgateInterceptor(registry=registry, agent_id="executor").call("probe", probe)
+    assert seen["chain"] == ["orchestrator", "executor"]
+
+
+def test_root_agent_chain_is_just_itself():
+    registry = TollgateRegistry()
+    registry.register("orchestrator", role="orchestrator")
+
+    seen = {}
+    TollgateInterceptor(registry=registry, agent_id="orchestrator").call(
+        "probe", lambda: seen.update(chain=list(current_scope().delegation_chain))
+    )
+    assert seen["chain"] == ["orchestrator"]
+
+
+def test_an_already_self_inclusive_chain_is_not_doubled():
+    """Code written against the old convention passed self-inclusive chains
+    explicitly to work around the graph bug — it must keep working."""
+    registry = TollgateRegistry()
+    registry.register("executor", delegation_chain=("orchestrator", "executor"))
+
+    seen = {}
+    TollgateInterceptor(registry=registry, agent_id="executor").call(
+        "probe", lambda: seen.update(chain=list(current_scope().delegation_chain))
+    )
+    assert seen["chain"] == ["orchestrator", "executor"]
+
+
+def test_direct_delegation_now_produces_a_graph_edge():
+    """zip(chain, chain[1:]) on a one-element ancestors-only tuple yielded
+    nothing, so a parent->child relationship drew zero agent edges."""
+    from tollgate.core.policy_set import PolicySet
+    from tollgate.report.graph import delegation_graph
+
+    registry = TollgateRegistry()
+    registry.register("executor", role="worker", delegation_chain=("orchestrator",))
+    # Some policy has to apply, or nothing is recorded and the graph is empty.
+    policy = PolicySet("always_ok")
+    policy.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
+    TollgateInterceptor(registry=registry, agent_id="executor", policies=[policy]).call(
+        "search", lambda: None
+    )
+
+    graph = delegation_graph(ActionLedger.current().events(), format="mermaid")
+    assert "orchestrator" in graph and "executor" in graph
+    assert "-->" in graph

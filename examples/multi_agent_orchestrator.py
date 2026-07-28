@@ -15,13 +15,11 @@ policies together, and exporting the delegation graph at the end — the
 framework's "auto-descriptive" promise applied to a multi-agent system: which
 agents can reach which tools, without a separate architecture diagram.
 
-Note on `delegation_chain`: registered here as the *full* lineage, including
-the agent's own id as the last element (`("orchestrator", "research_agent")`
-for `research_agent`) — matching the shape `ledger.export_delegation_graph()`
-expects to render an edge for a direct parent→child hop. If you only need
-depth-counting (`max_delegation_depth_policy`), an ancestors-only chain (not
-including self) also works, since that policy just counts list length — see
-examples/delegation_chain.py for that narrower case.
+Note on `delegation_chain`: register *ancestors only* — the interceptor
+appends the agent's own id when building the scope, so `research_agent` here
+registers `("orchestrator",)` and every `GuardContext` sees
+`("orchestrator", "research_agent")`. That is the shape the ledger documents
+and `export_delegation_graph()` renders edges from.
 
 Run directly:
 
@@ -42,25 +40,10 @@ from tollgate import (
 # 1. One central registry: identity, role, trust level, and delegation
 #    lineage for every agent in the system.
 registry = TollgateRegistry()
-registry.register("orchestrator", role="orchestrator", trust_level=2, delegation_chain=("orchestrator",))
-registry.register(
-    "research_agent",
-    role="researcher",
-    trust_level=1,
-    delegation_chain=("orchestrator", "research_agent"),
-)
-registry.register(
-    "writer_agent",
-    role="writer",
-    trust_level=1,
-    delegation_chain=("orchestrator", "writer_agent"),
-)
-registry.register(
-    "executor_agent",
-    role="executor",
-    trust_level=1,
-    delegation_chain=("orchestrator", "executor_agent"),
-)
+registry.register("orchestrator", role="orchestrator", trust_level=2)
+registry.register("research_agent", role="researcher", trust_level=1, delegation_chain=("orchestrator",))
+registry.register("writer_agent", role="writer", trust_level=1, delegation_chain=("orchestrator",))
+registry.register("executor_agent", role="executor", trust_level=1, delegation_chain=("orchestrator",))
 
 # 2. Policies shared by every interceptor — role (and, for destructive tools,
 #    trust_level) decides which tools an agent may call, regardless of which

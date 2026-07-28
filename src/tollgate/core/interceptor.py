@@ -67,6 +67,31 @@ class TollgateInterceptor:
         if identity is not None:
             self.policies.extend(identity.policies)
 
+    def _self_inclusive_chain(self, identity: Any) -> tuple[str, ...]:
+        """The delegation chain with this interceptor's own `agent_id` last.
+
+        `TollgateRegistry.register(delegation_chain=...)` records *ancestors
+        only*, but everything that consumes a chain — `report.graph`'s
+        `zip(chain, chain[1:])` edges, `_is_cross_agent`, the ledger's
+        documented `["orchestrator", "executor_agent"]` shape — reads it as the
+        full path including the acting agent. Under the ancestors-only reading
+        a direct parent→child delegation is a one-element tuple, which yields
+        zero graph edges and never registers as cross-agent.
+
+        Appending here reconciles the two without changing what callers
+        register. `delegation_depth()` counts hops (`len - 1`), so existing
+        `max_delegation_depth_policy` thresholds keep their meaning.
+        """
+        ancestors: tuple[str, ...] = identity.delegation_chain if identity else ()
+        if self.agent_id is None:
+            return ancestors
+        # Tolerate a chain that already ends with us: examples and user code
+        # written against the old convention passed self-inclusive chains
+        # explicitly to work around the graph bug.
+        if ancestors and ancestors[-1] == self.agent_id:
+            return ancestors
+        return (*ancestors, self.agent_id)
+
     def _build_scope(self, *, session_id: str, domain: str | None) -> ExecutionScope:
         identity = self.registry.get(self.agent_id) if (self.registry and self.agent_id) else None
         with self._lock:
@@ -81,7 +106,7 @@ class TollgateInterceptor:
             domain=domain,
             caller_agent_id=self.agent_id,
             caller_role=identity.role if identity else None,
-            delegation_chain=identity.delegation_chain if identity else (),
+            delegation_chain=self._self_inclusive_chain(identity),
             trust_level=identity.trust_level if identity else 0,
             checksum_provider=self._checksum_provider,
             consent_provider=self._consent_provider,
