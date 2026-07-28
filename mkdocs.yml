@@ -3,7 +3,10 @@ site_description: Deterministic, code-defined guardrails for AI agent tool calls
 site_url: https://tollgate-dev.github.io/tollgate/
 repo_url: https://github.com/tollgate-dev/tollgate
 repo_name: tollgate-dev/tollgate
-edit_uri: edit/main/docs/
+# No `edit_uri` / `content.action.edit`: every page under `docs/` is generated
+# by `scripts/build_docs.py` from a source file elsewhere in the repo, so an
+# "edit this page" link would point at a path that does not exist on the
+# default branch. Edit the source (README/CLAUDE/... or the docstrings) instead.
 
 theme:
   name: material
@@ -11,7 +14,6 @@ theme:
     - navigation.sections
     - navigation.top
     - content.code.copy
-    - content.action.edit
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -26,6 +28,26 @@ theme:
         icon: material/weather-sunny
         name: Switch to light mode
 
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            filters: ["!^_"]
+            separate_signature: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+
 markdown_extensions:
   - admonition
   - toc:
@@ -35,9 +57,33 @@ markdown_extensions:
   - pymdownx.details
   - tables
 
+# The `Reference` entries mirror `REFERENCE_MODULES` in scripts/build_docs.py,
+# which generates the stub page each one points at. Keep the two in step.
 nav:
   - Home: index.md
   - Architecture: architecture.md
+  - Reference:
+      - Overview: reference/index.md
+      - Package API: reference/tollgate.md
+      - Core:
+          - GuardContext: reference/tollgate/core/context.md
+          - guard: reference/tollgate/core/decorator.md
+          - TollgateInterceptor: reference/tollgate/core/interceptor.md
+          - Policy and PolicySet: reference/tollgate/core/policy_set.md
+          - ReversibleAction: reference/tollgate/core/reversible.md
+          - Escalation interface: reference/tollgate/core/escalation.md
+          - Decisions: reference/tollgate/decisions.md
+          - CallState: reference/tollgate/state.md
+          - Redaction: reference/tollgate/redaction.md
+      - Policy library: reference/tollgate/policies.md
+      - Escalation handlers: reference/tollgate/escalation.md
+      - Framework adapters: reference/tollgate/adapters.md
+      - Multi-agent: reference/tollgate/multiagent.md
+      - Ledger: reference/tollgate/ledger.md
+      - Reports: reference/tollgate/report.md
+      - Linter: reference/tollgate/linter.md
+      - OpenTelemetry: reference/tollgate/otel.md
+      - Testing utilities: reference/tollgate/testing.md
   - Contributing: contributing.md
   - Security: security.md
   - Changelog: changelog.md

@@ -1,10 +1,12 @@
 name: Docs
 
+# Deploy only. The *build* is checked on every pull request by the `docs` job in
+# ci.yml, which runs the identical two commands — duplicating the PR trigger
+# here would just build the same site twice per PR.
 on:
   push:
     branches: [main]
-  # Build (but don't deploy) on PRs, so a broken link fails review, not main.
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,32 +15,29 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # MkDocs 2.0 removes the plugin system with no migration path, which would
-  # break the material theme. Pinned deliberately, not incidentally.
-  DOCS_DEPS: "mkdocs>=1.6,<2 mkdocs-material>=9.5,<10"
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Assemble docs/ from the repository markdown
-        run: uv run python scripts/build_docs.py
+      - name: Assemble docs/ from the repository markdown and the package API
+        # The docs toolchain lives in the locked `docs` dependency group rather
+        # than in a `--with` string here: mkdocs 2.0 drops the plugin system
+        # with no migration path, so the pin has to be resolved and locked, not
+        # re-resolved on every run.
+        run: uv run --locked --group docs python scripts/build_docs.py
       - name: Build the site
         # --strict turns a broken internal link into a build failure.
-        run: uv run --with "${{ env.DOCS_DEPS }}" mkdocs build --strict
+        run: uv run --locked --group docs mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3
-        if: github.ref == 'refs/heads/main'
         with:
           path: site/
 
   deploy:
-    if: github.ref == 'refs/heads/main'
     needs: [build]
     runs-on: ubuntu-latest
     environment:

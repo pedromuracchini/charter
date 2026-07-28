@@ -1,9 +1,17 @@
+# Owners must be a user or a *team* (`@org/team`) — a bare `@org` is not a
+# valid CODEOWNERS entry, and GitHub silently ignores the whole line, which is
+# indistinguishable from having no rule at all.
+
 # Default owner for everything in the repo.
-*       @tollgate-dev
+*       @tollgate-dev/maintainers
 
 # The evaluation engine is the single chokepoint every guarded call runs
 # through, and the security posture is documented policy — both warrant a
 # deliberate look rather than a routine one.
-/src/tollgate/_engine.py        @tollgate-dev
-/src/tollgate/core/             @tollgate-dev
-/SECURITY.md                    @tollgate-dev
+/src/tollgate/_engine.py        @tollgate-dev/maintainers
+/src/tollgate/core/             @tollgate-dev/maintainers
+/SECURITY.md                    @tollgate-dev/maintainers
+
+# Release and CI plumbing can publish artifacts under the project's name.
+/.github/workflows/             @tollgate-dev/maintainers
+/pyproject.toml                 @tollgate-dev/maintainers

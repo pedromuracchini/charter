@@ -1,5 +1,10 @@
 # Contributing to Tollgate
 
+This project ships a [Code of Conduct](CODE_OF_CONDUCT.md) (Contributor
+Covenant 2.1). Participating here — issues, pull requests, discussions — means
+agreeing to it. Report unacceptable behavior to bonadioar@gmail.com; report
+*security vulnerabilities* through `SECURITY.md` instead.
+
 ## Development setup
 
 This project uses [uv](https://docs.astral.sh/uv/) for dependency management
@@ -8,8 +13,13 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management
 ```bash
 # Every extra, matching what CI installs — the adapter and escalation tests
 # exercise the real framework objects, not mocks, so they need these present.
-uv sync --extra otel --extra langgraph --extra openai-agents --extra mcp
+uv sync --extra all
 ```
+
+CI also runs the suite with **no extras at all**, because the graceful
+degradation paths (`otel/config.py` falling back to no-ops, the adapters
+skipping their optional imports) are load-bearing behavior. If a change makes
+`import tollgate` require an optional dependency, that job is what catches it.
 
 ## Running checks
 
@@ -19,11 +29,33 @@ uv run pytest --cov=tollgate --cov-report=term-missing     # tests with coverage
 uv run pytest tests/core/test_reversible.py::test_permanent_blocks -q  # a single test
 uv run ruff check .                                        # lint
 uv run ruff check --fix .                                  # autofix
+uv run ruff format .                                       # format
 uv run mypy src/tollgate                                   # strict type check
 ```
 
-All four must pass before a PR is merged; CI runs them automatically
-(`.github/workflows/ci.yml`), matrixed across Python 3.11–3.13.
+`ruff check`, `mypy` and `pytest` must pass before a PR is merged; CI runs them
+automatically (`.github/workflows/ci.yml`), matrixed across Python 3.11–3.14
+and across Linux/macOS/Windows. Coverage is gated at 90% on the main leg.
+
+`ruff format` is configured (`[tool.ruff.format]`) but **not yet gated** — the
+tree predates it and reformatting it wholesale would bury every future `git
+blame`. Format the code you touch; a repo-wide `ruff format` belongs in its own
+commit, after which `ruff format --check .` can join the `lint` job.
+
+## Documentation
+
+`docs/` is assembled from the repository's own markdown plus mkdocstrings API
+stubs — most of it is generated, so edit the source (`README.md`, `CLAUDE.md`,
+or the docstrings themselves), not the generated page:
+
+```bash
+uv run --group docs python scripts/build_docs.py
+uv run --group docs mkdocs serve
+```
+
+Adding a module to the published API reference means adding it to
+`REFERENCE_MODULES` in `scripts/build_docs.py` *and* to the `Reference` nav
+section in `mkdocs.yml`.
 
 ## Commit messages
 
@@ -67,14 +99,19 @@ Publishing is tag-driven and runs through
 `.github/workflows/release.yml` — no one uploads from a laptop.
 
 1. Move the `## [Unreleased]` entries in `CHANGELOG.md` under the new version
-   with today's date.
+   with today's date. This is not bookkeeping — that section *is* the GitHub
+   release body (`scripts/changelog_section.py` extracts it), and the release
+   job fails if the tagged version has no section.
 2. Bump `version` in `pyproject.toml`.
 3. Commit (`chore(release): v0.2.0`), tag `v0.2.0`, and push both.
 
-The workflow re-runs the full matrix against the tagged commit, builds, and
-**fails if the tag doesn't match `pyproject.toml`'s version** — publishing the
-wrong version under the right name cannot be undone on PyPI. Upload uses PyPI
-trusted publishing (OIDC), so there is no long-lived API token in repo secrets.
+The workflow re-runs the full matrix against the tagged commit, builds, runs
+`twine check` and a clean-environment install of the built wheel, and **fails
+if the tag doesn't match `pyproject.toml`'s version** — publishing the wrong
+version under the right name cannot be undone on PyPI. Upload uses PyPI trusted
+publishing (OIDC), so there is no long-lived API token in repo secrets, and
+PEP 740 attestations are attached so consumers can verify the artifacts came
+from this workflow.
 
 ## Reporting bugs / requesting features
 

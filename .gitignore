@@ -13,9 +13,27 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tox/
 .coverage
+coverage.xml
+htmlcov/
 
-# Generated documentation. `docs/` is assembled from the repository's own
-# markdown by scripts/build_docs.py; `site/` is mkdocs' output.
-docs/
+# Editors and OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.orig
+
+# Generated documentation. `site/` is mkdocs' output. Under `docs/`, only the
+# pages `scripts/build_docs.py` writes are ignored — listed individually rather
+# than ignoring the whole directory, so a hand-authored page can be committed
+# alongside the generated ones (the script no longer deletes what it did not
+# create).
 site/
+/docs/.generated-pages
+/docs/index.md
+/docs/architecture.md
+/docs/contributing.md
+/docs/security.md
+/docs/changelog.md
+/docs/reference/

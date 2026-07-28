@@ -1,0 +1,85 @@
+name: Security
+
+# Three different questions, deliberately in one workflow so a security
+# regression is one check to look at rather than three:
+#   - CodeQL: is there a vulnerable pattern in code we wrote?
+#   - pip-audit: is there a known CVE in something we depend on?
+#   - dependency-review: does this PR *introduce* one?
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, because the advisory database moves even when the code does not —
+    # a dependency that was clean at merge time can be vulnerable a month later
+    # with no commit in between.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # security-and-quality is a superset of the default query suite. This
+          # is an authorization library; a false positive to triage is cheaper
+          # than a missed injection path.
+          queries: security-and-quality
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Export the locked dependency set
+        # Audit what is actually locked, extras included — auditing the
+        # environment would miss anything an extra pulls in but this runner did
+        # not happen to install.
+        run: uv export --locked --all-extras --format requirements-txt --no-emit-project --output-file requirements.txt
+      - name: Audit for known vulnerabilities
+        run: uvx pip-audit --requirement requirements.txt --strict --progress-spinner off
+
+  dependency-review:
+    name: Dependency review
+    # Only pull_request: the action diffs the PR's dependency manifest against
+    # its base, and there is no such diff on a push or a schedule.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
+          # Copyleft licenses would change the terms under which downstream
+          # projects can embed this Apache-2.0 library.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0
