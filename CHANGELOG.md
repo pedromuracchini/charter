@@ -30,6 +30,14 @@ initial implementation.
   reverted. The engine now checks the new `ReversibleAction.is_undoable`,
   records `undo_op=None`, appends `"(no undo_fn configured — action NOT
   reverted)"` to the reason, and logs a warning.
+- **A tool raising after being authorized left no ledger entry at all.**
+  `invoke()` was called bare, so an exception skipped every post-hook and the
+  whole recording step: an authorized call that ran and failed was invisible to
+  an audit. The engine now records a `decision="ERROR"`, `hook="invoke"` event
+  carrying the exception type, message and full caller identity, then
+  re-raises unchanged. `LedgerEvent.decision` gained `"ERROR"` and `hook`
+  gained `"invoke"`; `Decision`/`GuardDecision` are unchanged, since this is
+  not a policy decision.
 - **`policy_hash` was never populated in any ledger event or span.** The field
   existed on `LedgerEvent`, the `tollgate.policy_hash` span attribute was
   emitted, and `PolicySet.policy_hash` was implemented and tested — but the

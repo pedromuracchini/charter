@@ -155,6 +155,19 @@ rule (shown as a `log` edge in the coverage graph): it still gets recorded to
 the ledger when it fails, but it never blocks or escalates anything, even if
 it "fires" at the same time as a BLOCK rule (which wins).
 
+### An authorized tool that raises is still an audit event
+
+`invoke()` is wrapped in both engines: if the guarded tool raises, the engine
+records a `decision="ERROR"`, `hook="invoke"` `LedgerEvent` (exception type and
+message in `reason`, full caller identity attached) and re-raises unchanged.
+Otherwise a call that was authorized, ran, and blew up would skip every
+post-hook *and* the recording step, leaving no trace at all. `"ERROR"` lives
+only on `LedgerEvent.decision` — `Decision`/`GuardDecision` stay
+BLOCK/ESCALATE/ALLOW, because this is not a policy decision. It is never
+sampled, and emits no OTEL span: Tollgate decided nothing here, and whatever
+instruments the tool owns that part of the trace. Post-hooks are deliberately
+skipped — they have no result to inspect.
+
 ### Every failing rule is recorded, not just the one acted on
 
 `pick_decision()` collapses a hook's failures to one `RuleResult` by precedence,

@@ -343,6 +343,40 @@ def _undo_succeeded(reversible: ReversibleAction, decision: GuardDecision) -> tu
     return f"{reversible.name}.undo", replace(decision, undo_executed=True)
 
 
+def _record_tool_error(ctx: GuardContext, exc: BaseException, *, mode: str) -> None:
+    """Record that an authorized tool call raised.
+
+    Without this, a tool that blows up skips every post-hook and writes nothing:
+    the call was authorized, ran, and failed, yet the audit trail showed no
+    trace of it. Never sampled — tool failures are rare and always interesting.
+
+    No OTEL span is emitted: Tollgate made no decision here, and whatever
+    instruments the tool itself owns that part of the trace.
+    """
+    ActionLedger.current().record(
+        LedgerEvent(
+            event_id=_new_event_id(),
+            ts=datetime.now(UTC).isoformat(),
+            tool=ctx.tool_name,
+            args=ctx.args,
+            policy=None,
+            decision="ERROR",
+            reason=f"tool raised {type(exc).__name__}: {exc}",
+            severity="high",
+            hook="invoke",
+            mode=mode,  # type: ignore[arg-type]
+            checksum_expected=ctx.state_checksum,
+            checksum_got=ctx.recompute_checksum(),
+            session_id=ctx.session_id,
+            step_index=ctx.step_index,
+            caller_agent_id=ctx.caller_agent_id,
+            caller_role=ctx.caller_role,
+            delegation_chain=list(ctx.delegation_chain),
+            trust_level=ctx.trust_level,
+        )
+    )
+
+
 def _aggregate_policy_name(names: list[str]) -> str | None:
     """Collapse the policies that contributed rules to one label: the single
     name if only one did, a `+`-joined label if several did, else `None`."""
@@ -450,7 +484,11 @@ def evaluate_call(
         )
 
     snapshot = reversible.snapshot(args) if reversible is not None else None
-    result = invoke()
+    try:
+        result = invoke()
+    except BaseException as exc:
+        _record_tool_error(ctx, exc, mode=mode)
+        raise
     ctx.result = result
 
     post_results: list[RuleResult] = []
@@ -556,7 +594,11 @@ async def evaluate_call_async(
         )
 
     snapshot = reversible.snapshot(args) if reversible is not None else None
-    result = await invoke()
+    try:
+        result = await invoke()
+    except BaseException as exc:
+        _record_tool_error(ctx, exc, mode=mode)
+        raise
     ctx.result = result
 
     post_results: list[RuleResult] = []

@@ -8,7 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tollgate.decisions import Severity
 
-DecisionLabel = Literal["BLOCK", "ESCALATE", "ALLOW"]
+#: `ERROR` is not a policy decision — it records that the guarded tool itself
+#: raised after being authorized, so an authorized-but-failed call is still
+#: visible in the audit trail. Only `LedgerEvent.decision` ever takes it;
+#: `Decision`/`GuardDecision` remain BLOCK/ESCALATE/ALLOW.
+DecisionLabel = Literal["BLOCK", "ESCALATE", "ALLOW", "ERROR"]
+
+#: `invoke` marks the tool-execution step, between the pre and post hooks.
+HookLabel = Literal["pre", "post", "invoke"]
 
 
 class ContributingRule(BaseModel):
@@ -47,7 +54,7 @@ class LedgerEvent(BaseModel):
     decision: DecisionLabel
     reason: str
     severity: Severity = "medium"
-    hook: Literal["pre", "post"] = "pre"
+    hook: HookLabel = "pre"
     mode: Literal["enforce", "dry_run", "observe"] = "enforce"
     checksum_expected: str | None = None
     checksum_got: str | None = None
