@@ -47,6 +47,15 @@ from tollgate.multiagent.delegation import (
 from tollgate.multiagent.registry import AgentIdentity, TollgateRegistry
 from tollgate.multiagent.scoped_policy import AgentScopedPolicy
 from tollgate.otel.config import configure_otel
+from tollgate.redaction import (
+    PII_PATTERNS,
+    SECRET_PATTERNS,
+    NullRedactor,
+    PatternRedactor,
+    Redactor,
+    configure_redaction,
+    current_redactor,
+)
 from tollgate.report.policy_report import PolicyReport, build_report
 from tollgate.state import CallState
 
@@ -81,13 +90,18 @@ __all__ = [
     "LintFinding",
     "Mode",
     "NotPolicy",
+    "NullRedactor",
     "OrPolicy",
+    "PII_PATTERNS",
+    "PatternRedactor",
     "Policy",
     "PolicyReport",
     "PolicySet",
+    "Redactor",
     "ReplayResult",
     "ReversibleAction",
     "RuleResult",
+    "SECRET_PATTERNS",
     "Severity",
     "SlackEscalationHandler",
     "TollgateInterceptor",
@@ -97,6 +111,8 @@ __all__ = [
     "build_report",
     "configure_ledger",
     "configure_otel",
+    "configure_redaction",
+    "current_redactor",
     "current_scope",
     "delegation_depth",
     "extend_chain",

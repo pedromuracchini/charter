@@ -7,31 +7,24 @@ distinctive prefixes, JWTs, PEM private-key blocks.
 
 Deliberately conservative: every pattern here is anchored on a literal marker
 (`sk-ant-`, `AKIA`, `-----BEGIN`), so false positives are rare and a BLOCK can
-be the default. Detection is not redaction — a matched secret is *not* removed
-from `LedgerEvent.args`. See SECURITY.md.
+be the default.
+
+Detection and redaction are separate concerns sharing one pattern set. This
+module *blocks the call*; `tollgate.redaction` *scrubs the record* of calls
+that were allowed to proceed. Both read `SECRET_PATTERNS` from
+`tollgate.redaction`, so adding a pattern improves both at once.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 
 from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, Decision, Severity
+from tollgate.redaction import SECRET_PATTERNS
 
-#: (label, pattern) pairs. Anchored on literal prefixes rather than entropy
-#: heuristics, which produce far too many false positives on ordinary text.
-SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("AWS access key id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}")),
-    ("OpenAI API key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}")),
-    ("GitHub token", re.compile(r"\b gh[pousr]_[A-Za-z0-9]{20,}\b".replace(" ", ""))),
-    ("Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}")),
-    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    ("JSON Web Token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
-    ("private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----")),
-)
+__all__ = ["SECRET_PATTERNS", "describe_secrets", "find_secrets", "no_secrets_in_args"]
 
 
 def find_secrets(value: object) -> list[str]:

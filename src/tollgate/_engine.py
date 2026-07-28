@@ -54,6 +54,7 @@ from tollgate.ledger.ledger import ActionLedger
 from tollgate.multiagent.delegation import delegation_depth
 from tollgate.otel.metrics import record_decision, record_delegation_depth, record_escalation
 from tollgate.otel.spans import evaluate_span, should_sample
+from tollgate.redaction import current_redactor
 
 logger = logging.getLogger("tollgate.reversible")
 _escalation_logger = logging.getLogger("tollgate.escalation")
@@ -298,20 +299,26 @@ def _record(
         sampled=sampled,
     ) as span_ids:
         record_decision(decision, ctx.tool_name, latency_ms, _is_cross_agent(ctx))
+        # Redaction happens here and nowhere earlier: the policies above have
+        # already evaluated against the real `ctx.args`, and this is the last
+        # point before the values become durable. `reason`/`undo_op` are
+        # scrubbed too — a fail-closed predicate folds its exception text into
+        # the reason, and that text routinely quotes the argument that broke it.
+        redactor = current_redactor()
         event = LedgerEvent(
             event_id=_new_event_id(),
             ts=datetime.now(UTC).isoformat(),
             tool=ctx.tool_name,
-            args=ctx.args,
+            args=redactor.redact_args(ctx.args),
             policy=decision.policy_name,
             decision=decision.action.value.upper(),  # type: ignore[arg-type]
-            reason=decision.reason,
+            reason=redactor.redact_text(decision.reason),
             severity=decision.severity,
             hook=hook,
             mode=mode,  # type: ignore[arg-type]
             checksum_expected=ctx.state_checksum,
             checksum_got=ctx.recompute_checksum(),
-            undo_op=undo_op,
+            undo_op=redactor.redact_text(undo_op) if undo_op else None,
             session_id=ctx.session_id,
             step_index=ctx.step_index,
             caller_agent_id=ctx.caller_agent_id,
@@ -322,7 +329,7 @@ def _record(
             contributing_rules=[
                 ContributingRule(
                     policy=r.policy_name,
-                    reason=r.reason,
+                    reason=redactor.redact_text(r.reason),
                     on_fail=r.on_fail.value.upper(),  # type: ignore[arg-type]
                     severity=r.severity,
                     policy_hash=r.policy_hash,
@@ -380,15 +387,18 @@ def _record_tool_error(ctx: GuardContext, exc: BaseException, *, mode: str) -> N
     No OTEL span is emitted: Tollgate made no decision here, and whatever
     instruments the tool itself owns that part of the trace.
     """
+    redactor = current_redactor()
     ActionLedger.current().record(
         LedgerEvent(
             event_id=_new_event_id(),
             ts=datetime.now(UTC).isoformat(),
             tool=ctx.tool_name,
-            args=ctx.args,
+            args=redactor.redact_args(ctx.args),
             policy=None,
             decision="ERROR",
-            reason=f"tool raised {type(exc).__name__}: {exc}",
+            # An exception message very often echoes the argument that caused
+            # it — `KeyError: 'sk-ant-...'` is a real shape.
+            reason=redactor.redact_text(f"tool raised {type(exc).__name__}: {exc}"),
             severity="high",
             hook="invoke",
             mode=mode,  # type: ignore[arg-type]
