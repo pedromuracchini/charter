@@ -61,8 +61,9 @@ def rate_limit_policy(
 
 def budget_policy(
     max_total: float,
-    amount_from: Callable[[GuardContext], float],
+    amount_from: Callable[[GuardContext], float] | None = None,
     *,
+    actual_from: Callable[[GuardContext], float] | None = None,
     key: str = "budget",
     tool_name: str | None = None,
     name: str | None = None,
@@ -73,38 +74,76 @@ def budget_policy(
 ) -> PolicySet:
     """Cap a session's cumulative spend at `max_total`.
 
-    `amount_from(ctx)` extracts this call's cost from its arguments — e.g.
-    `lambda ctx: ctx.args["amount"]`. The pre-hook rejects a call that *would*
-    push the running total past `max_total`, so the cap is never exceeded
-    rather than merely detected afterwards.
+    Two shapes, because a cost is knowable at two very different moments.
+
+    **Knowable up front** — a transfer amount is right there in the arguments.
+    Pass `amount_from`, and the pre-hook rejects any call that *would* push the
+    running total past `max_total`, so the cap is never exceeded:
 
         budget_policy(1000.0, lambda ctx: ctx.args["amount"], tool_name="transfer")
 
-    The spend is recorded by a `hook="post"` rule, so only calls that actually
-    ran are charged. That rule mutates state from inside a predicate, which
-    every other policy in Tollgate avoids — it is the deliberate exception that
-    lets "check then charge" work without adding a third engine hook. It always
-    passes and never blocks anything.
+    **Only knowable afterwards** — an LLM call's token cost lives in the
+    response. Pass `actual_from`, which reads `ctx.result` in the post hook.
+    The pre-hook can then only check whether the budget is *already* exhausted,
+    so semantics shift from "never exceed" to "stop once spent": the call that
+    crosses the line still runs, and the one after it is blocked. That is
+    inherent to not knowing the price before you pay it, not a shortcut.
 
-    `amount_from` raising is handled like any other predicate error: fail
+        budget_policy(5.0, actual_from=token_cost(3.0, 15.0), tool_name="call_llm")
+
+    Give both to bound the overshoot: `amount_from` charges an estimate at the
+    pre-hook check, `actual_from` supersedes it with the real figure at the
+    post hook.
+
+    Spend is recorded by a `hook="post"` rule, so a call blocked in the
+    pre-hook is never charged, and neither is one whose tool raised. That rule
+    mutates state from inside a predicate, which every other policy in Tollgate
+    avoids — the deliberate exception that lets "check then charge" work
+    without a third engine hook. It always passes and never blocks anything.
+
+    Either callable raising is handled like any other predicate error: fail
     closed (see `_safety.safe_call`).
+
+    **Concurrency caveat.** The check and the charge are separate hooks, so
+    calls running *concurrently within one session* can each pass the check
+    before any of them charges, and together overshoot. Budgets are scoped per
+    session, and a single agent loop is normally sequential, so this rarely
+    bites — but it is a quota, not a hard financial control.
     """
+    if amount_from is None and actual_from is None:
+        raise ValueError("budget_policy requires amount_from and/or actual_from")
+
     scope_label = tool_name or "any tool"
     policy = PolicySet(
         name or f"budget_{key}_{max_total:g}",
         active_when=(lambda ctx: ctx.tool_name == tool_name) if tool_name else None,
     )
 
-    policy.require(
-        lambda ctx: ctx.spent(key) + float(amount_from(ctx)) <= max_total,
-        on_fail=on_fail,
-        reason=reason or f"session budget of {max_total:g} for {scope_label} would be exceeded",
-        severity=severity,
-        escalate_to=escalate_to,
-    )
+    if amount_from is not None:
+        estimate = amount_from
+        policy.require(
+            lambda ctx: ctx.spent(key) + float(estimate(ctx)) <= max_total,
+            on_fail=on_fail,
+            reason=reason or f"session budget of {max_total:g} for {scope_label} would be exceeded",
+            severity=severity,
+            escalate_to=escalate_to,
+        )
+    else:
+        # No pre-call estimate exists, so the most this can do is refuse to
+        # start a call once the budget is already gone.
+        policy.require(
+            lambda ctx: ctx.spent(key) < max_total,
+            on_fail=on_fail,
+            reason=reason or f"session budget of {max_total:g} for {scope_label} is exhausted",
+            severity=severity,
+            escalate_to=escalate_to,
+        )
+
+    charge_from = actual_from if actual_from is not None else amount_from
+    assert charge_from is not None  # guaranteed by the ValueError above
 
     def _charge(ctx: GuardContext) -> bool:
-        ctx.record_spend(key, float(amount_from(ctx)))
+        ctx.record_spend(key, float(charge_from(ctx)))
         return True
 
     policy.require(
