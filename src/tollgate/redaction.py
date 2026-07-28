@@ -217,7 +217,16 @@ class PatternRedactor:
         return value if self.redact_text(decoded) == decoded else self.placeholder.encode()
 
     def _redact_key(self, key: Any) -> Any:
-        return self.redact_text(key) if isinstance(key, str) else key
+        """Scrub a mapping key the same way its values are scrubbed.
+
+        Routed through `_redact_value` rather than special-casing `str`, so a
+        `bytes` key holding a credential is caught too — it was not, while the
+        identical value one position to the right was, and
+        `contains_placeholder` walked bytes keys either way, so such a leak was
+        both unredacted and undetectable. Redacting a hashable yields a
+        hashable, so the result is still a legal key.
+        """
+        return self._redact_value(key)
 
     def _redact_value(self, value: Any) -> Any:
         if isinstance(value, str):

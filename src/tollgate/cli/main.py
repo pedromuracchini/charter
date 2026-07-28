@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from types import ModuleType
@@ -36,6 +37,11 @@ from tollgate.testing.repl import run_repl
 
 def _load_module(path: str) -> ModuleType:
     module_path = Path(path).resolve()
+    # Checked before `spec_from_file_location`, which happily builds a spec for
+    # a path that isn't there and only fails deep inside `exec_module` — with a
+    # ten-frame importlib traceback instead of a one-line "no such file".
+    if not module_path.is_file():
+        raise SystemExit(f"no such agent module: {path!r}")
     spec = importlib.util.spec_from_file_location(module_path.stem, module_path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"could not load module from {path!r}")
@@ -67,14 +73,19 @@ def _load_ledger_events(ledger_path: str | None) -> list[LedgerEvent]:
 
     parsed: list[LedgerEvent] = []
     skipped = 0
-    with Path(ledger_path).open(encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                parsed.append(LedgerEvent.model_validate_json(line))
-            except ValidationError:
-                skipped += 1
+    try:
+        with Path(ledger_path).open(encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    parsed.append(LedgerEvent.model_validate_json(line))
+                except ValidationError:
+                    skipped += 1
+    except OSError as exc:
+        # Same reasoning as the agent-module load path: a mistyped path is an
+        # everyday CLI mistake and deserves one line, not a traceback.
+        raise SystemExit(f"could not read ledger {ledger_path!r}: {exc.strerror}") from exc
     if skipped:
         print(
             f"warning: skipped {skipped} unparseable line(s) in {ledger_path}",
@@ -170,10 +181,20 @@ def _cmd_replay(args: argparse.Namespace) -> None:
         print(f"changed: {result.changed}")
 
 
-def _cmd_repl(args: argparse.Namespace) -> None:
+def _cmd_repl(
+    args: argparse.Namespace,
+    input_fn: Callable[[str], str] = input,
+    output_fn: Callable[[str], None] = print,
+) -> None:
+    """Load an agent module and hand its policies to the interactive REPL.
+
+    `input_fn`/`output_fn` are forwarded to `run_repl` and default to the
+    builtins; they exist so the subcommand can be driven from a test without a
+    terminal (`argparse` only ever passes `args`).
+    """
     module = _load_module(args.agent)
     policies = _policies_from_module(module)
-    run_repl(policies)
+    run_repl(policies, input_fn=input_fn, output_fn=output_fn)
 
 
 def _cmd_export(args: argparse.Namespace) -> None:

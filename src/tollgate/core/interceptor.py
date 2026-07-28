@@ -47,7 +47,12 @@ _RESERVED_ARGUMENT_NAMES = ("session_id", "domain")
 
 
 def _shadowed_parameters(func: Callable[..., Any] | ReversibleAction, names: Iterable[str]) -> list[str]:
-    """Which of `names` the target tool declares as parameters of its own."""
+    """Which of `names` the target tool declares as parameters of its own.
+
+    A `ReversibleAction` takes one opaque `args` mapping rather than named
+    parameters, so there is no signature to check and every name is *possible*.
+    That case is handled by `_warn_if_shadowed`, not here.
+    """
     if isinstance(func, ReversibleAction):
         return []
     try:
@@ -60,7 +65,7 @@ def _shadowed_parameters(func: Callable[..., Any] | ReversibleAction, names: Ite
 def _warn_if_shadowed(
     tool_name: str,
     func: Callable[..., Any] | ReversibleAction,
-    passed: Iterable[str],
+    passed: list[str],
 ) -> None:
     """Warn when an interceptor option was passed to a tool that declares a
     parameter by the same name.
@@ -70,6 +75,17 @@ def _warn_if_shadowed(
     the tool, and the call then fails with a confusing "missing required
     argument". `domain` is an ordinary argument name for a real tool, so this
     is worth surfacing rather than documenting away.
+
+    The check is exact, and deliberately so: it consults the target's real
+    signature and fires only on a genuine collision. A `ReversibleAction` has
+    no parameter list to consult — its arguments are an opaque mapping that
+    could hold a `domain` key — so for one of those, `**kwargs` are its
+    arguments and `session_id`/`domain` are interceptor options, by contract
+    rather than by inspection. Guessing there was tried and rejected: mixing a
+    scope option with tool arguments (`call(name, action, domain="healthcare",
+    id=1)`) is a correct, common pattern, and a warning that fires on correct
+    code teaches people to ignore warnings. An action whose arguments really do
+    need one of those names passes `args={...}`.
     """
     shadowed = _shadowed_parameters(func, passed)
     if not shadowed:
@@ -77,9 +93,9 @@ def _warn_if_shadowed(
     names = ", ".join(repr(name) for name in shadowed)
     warnings.warn(
         f"{names} was consumed by TollgateInterceptor.call() as an interceptor option, "
-        f"but tool {tool_name!r} declares a parameter of the same name — it will not "
-        f"receive a value. Pass the tool's arguments explicitly as "
-        f"args={{...}} to keep the two apart.",
+        f"but may have been meant as an argument for tool {tool_name!r}, which will not "
+        f"receive it. Pass the tool's arguments explicitly as args={{...}} to keep the "
+        f"two apart.",
         ConfigurationWarning,
         stacklevel=4,
     )
