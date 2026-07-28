@@ -5,8 +5,11 @@ Safe to import unconditionally: `LangGraphAdapter`/`OpenAIAgentsAdapter`/
 `applies_to()` — importing this package (which happens the first time
 `TollgateInterceptor.use()` or `tollgate.wrap()` is called) never requires
 `langchain_core`/`langgraph`/`agents`/`mcp` to be installed.
-`LangChainAdapter`/`CrewAIAdapter`/`ClaudeSDKAdapter` remain skeletons and are
-not registered (see CLAUDE.md's "Deferred" section).
+
+Anything these three don't claim falls through to `GenericAdapter`, which
+handles a plain `agent.tools` dict/iterable or a bare callable. Frameworks
+with no dedicated adapter (CrewAI, Claude Agent SDK, AutoGen, ...) are reached
+that way, or by calling `interceptor.wrap_tool()` per tool.
 """
 
 from __future__ import annotations

@@ -563,14 +563,15 @@ Deferred or intentionally out of scope:
   branch on `staging` vs `production` — both considered and intentionally not
   built: the former needs cross-call state that complicates the data model,
   the latter risks silent policy divergence between environments.
-- **Concrete framework adapters for LangChain, CrewAI, and Claude Agent SDK**
-  — `adapters/langchain.py`/`crewai.py`/`claude_sdk.py` remain thin,
-  optional-import skeletons that raise `NotImplementedError` from `install()`,
-  and are not registered by default. (LangGraph and OpenAI Agents SDK *do*
-  have real adapters now — see the "Real adapters" section below.)
-  `interceptor.use(agent)` / `tollgate.wrap(agent, interceptor)` falls back to
-  `GenericAdapter` for anything the registered adapters don't claim, which
-  handles a plain `agent.tools` dict/iterable-of-pairs or a bare callable
-  agent — sufficient for the test suite and `examples/clinical.py`, but not
-  LangChain's/CrewAI's/Claude Agent SDK's native tool objects.
+- **Dedicated adapters for CrewAI, Claude Agent SDK, AutoGen, Pydantic-AI,
+  Google ADK, Strands** — not written. There used to be `NotImplementedError`
+  skeletons for CrewAI/Claude SDK/LangChain; they were deleted, because a stub
+  that raises on `install()` is worse than no stub: `interceptor.use(agent)`
+  would find it, claim the agent, and blow up, where the absence lets
+  `GenericAdapter` handle it. LangChain needs no adapter of its own — the
+  `LangGraphAdapter` wraps `langchain_core.tools.BaseTool`, which is exactly
+  what LangChain uses. For the rest, `interceptor.use(agent)` /
+  `tollgate.wrap(agent, interceptor)` falls back to `GenericAdapter` (a plain
+  `agent.tools` dict/iterable-of-pairs, or a bare callable agent), or call
+  `interceptor.wrap_tool()` per tool.
 - **TypeScript implementation** — this project is Python-only.
