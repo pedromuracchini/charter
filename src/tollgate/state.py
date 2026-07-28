@@ -30,17 +30,21 @@ from collections import OrderedDict
 #: session's counters, which is a memory bound, not a correctness guarantee.
 DEFAULT_MAX_SESSIONS = 10_000
 
-#: Key used for a session's total call count, across every tool.
-_ALL_TOOLS = "*"
+#: Pass this as a tool name to `call_count()` / `ctx.calls_this_session()` to
+#: get a session's total across every tool. It is a sentinel, not a key: the
+#: total lives in its own counter, so a tool genuinely named `"*"` is counted
+#: on its own like any other and does not double-count into the total.
+ALL_TOOLS = "*"
 
 
 class _SessionState:
     """One session's counters. Always accessed under `CallState._lock`."""
 
-    __slots__ = ("calls", "spend")
+    __slots__ = ("calls", "spend", "total_calls")
 
     def __init__(self) -> None:
         self.calls: dict[str, int] = {}
+        self.total_calls: int = 0
         self.spend: dict[str, float] = {}
 
 
@@ -56,6 +60,11 @@ class CallState:
         self._sessions: OrderedDict[str, _SessionState] = OrderedDict()
         self._max_sessions = max_sessions
         self._lock = threading.Lock()
+
+    def __repr__(self) -> str:
+        with self._lock:
+            sessions = len(self._sessions)
+        return f"<CallState sessions={sessions} max_sessions={self._max_sessions}>"
 
     def _touch(self, session_id: str) -> _SessionState:
         """Fetch (creating if needed) a session's state and mark it recently
@@ -75,15 +84,20 @@ class CallState:
         with self._lock:
             state = self._touch(session_id)
             state.calls[tool_name] = state.calls.get(tool_name, 0) + 1
-            state.calls[_ALL_TOOLS] = state.calls.get(_ALL_TOOLS, 0) + 1
+            state.total_calls += 1
 
     def call_count(self, session_id: str, tool_name: str | None = None) -> int:
-        """Calls attempted in this session — for `tool_name`, or every tool."""
+        """Calls attempted in this session — for `tool_name`, or every tool.
+
+        `None` or `ALL_TOOLS` returns the session total.
+        """
         with self._lock:
             state = self._sessions.get(session_id)
             if state is None:
                 return 0
-            return state.calls.get(tool_name if tool_name is not None else _ALL_TOOLS, 0)
+            if tool_name is None or tool_name == ALL_TOOLS:
+                return state.total_calls
+            return state.calls.get(tool_name, 0)
 
     def add_spend(self, session_id: str, key: str, amount: float) -> float:
         """Add `amount` to the named accumulator, returning the new total."""

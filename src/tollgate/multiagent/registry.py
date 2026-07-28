@@ -26,10 +26,19 @@ class AgentIdentity:
 
 
 class TollgateRegistry:
-    """Maps `agent_id -> AgentIdentity`."""
+    """Maps `agent_id -> AgentIdentity`.
+
+    One registry shared by several `TollgateInterceptor`s is the alternative
+    to duplicating role and policy wiring per interceptor — see "Multi-agent"
+    in CLAUDE.md for when each shape fits.
+    """
 
     def __init__(self) -> None:
         self._identities: dict[str, AgentIdentity] = {}
+
+    def __repr__(self) -> str:
+        agents = ",".join(sorted(self._identities))
+        return f"<TollgateRegistry agents={len(self._identities)}[{agents}]>"
 
     def register(
         self,
@@ -39,6 +48,19 @@ class TollgateRegistry:
         delegation_chain: list[str] | tuple[str, ...] = (),
         trust_level: int = 0,
     ) -> AgentIdentity:
+        """Register (or replace) one agent's identity, returning it.
+
+        Args:
+            agent_id: The id an interceptor references to adopt this identity.
+            role: Matched against `AgentScopedPolicy.allowed_roles`.
+            policies: Appended to the policy list of every interceptor
+                constructed for this agent.
+            delegation_chain: This agent's **ancestors only**, ordered
+                outermost first. The acting agent is appended automatically
+                when a scope is built, so `ctx.delegation_chain` is the full
+                path — see `TollgateInterceptor._self_inclusive_chain`.
+            trust_level: Compared by `ctx.trust_at_least(n)`.
+        """
         identity = AgentIdentity(
             agent_id=agent_id,
             role=role,
@@ -50,10 +72,12 @@ class TollgateRegistry:
         return identity
 
     def get(self, agent_id: str) -> AgentIdentity | None:
+        """The identity registered for `agent_id`, or `None`."""
         return self._identities.get(agent_id)
 
     def __contains__(self, agent_id: str) -> bool:
         return agent_id in self._identities
 
     def all(self) -> list[AgentIdentity]:
+        """Every registered identity, in registration order."""
         return list(self._identities.values())

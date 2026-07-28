@@ -46,9 +46,7 @@ _UNSET: Any = object()
 _RESERVED_ARGUMENT_NAMES = ("session_id", "domain")
 
 
-def _shadowed_parameters(
-    func: Callable[..., Any] | ReversibleAction, names: Iterable[str]
-) -> list[str]:
+def _shadowed_parameters(func: Callable[..., Any] | ReversibleAction, names: Iterable[str]) -> list[str]:
     """Which of `names` the target tool declares as parameters of its own."""
     if isinstance(func, ReversibleAction):
         return []
@@ -240,9 +238,7 @@ class TollgateInterceptor:
                 func,
                 [
                     name
-                    for name, value in zip(
-                        _RESERVED_ARGUMENT_NAMES, (session_id, domain), strict=True
-                    )
+                    for name, value in zip(_RESERVED_ARGUMENT_NAMES, (session_id, domain), strict=True)
                     if value is not _UNSET
                 ],
             )

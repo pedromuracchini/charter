@@ -19,6 +19,7 @@ from typing import Literal
 
 from tollgate._safety import safe_call
 from tollgate.core.context import GuardContext
+from tollgate.core.escalation import validate_escalate_to
 from tollgate.decisions import BLOCK, Decision, RuleResult, Severity
 
 Hook = Literal["pre", "post"]
@@ -60,13 +61,13 @@ class _Rule:
     """A single predicate registered on a `PolicySet` via `require()`."""
 
     __slots__ = (
-        "predicate",
-        "on_fail",
-        "reason",
         "escalate_to",
-        "timeout_s",
-        "severity",
         "hook",
+        "on_fail",
+        "predicate",
+        "reason",
+        "severity",
+        "timeout_s",
     )
 
     def __init__(
@@ -119,6 +120,11 @@ class PolicySet(Policy):
         # by require(), the only thing that changes the inputs.
         self._hash_cache: str | None = None
 
+    def __repr__(self) -> str:
+        pre = sum(1 for rule in self._rules if rule.hook == "pre")
+        post = len(self._rules) - pre
+        return f"<PolicySet {self.name!r} pre={pre} post={post} hash={self.policy_hash}>"
+
     def require(
         self,
         predicate: Callable[[GuardContext], bool],
@@ -130,7 +136,22 @@ class PolicySet(Policy):
         severity: Severity = "medium",
         hook: Hook = "pre",
     ) -> PolicySet:
-        """Register a rule. Returns `self` so calls can be chained if desired."""
+        """Register a rule. Returns `self` so calls can be chained if desired.
+
+        Args:
+            predicate: Returns `True` when the call is acceptable. Evaluated
+                against a real `GuardContext`; an exception fails closed.
+            on_fail: `BLOCK`, `ESCALATE`, or `ALLOW` (log-only — recorded but
+                never enforced).
+            reason: Recorded on the ledger event and carried in `GuardBlocked`.
+            escalate_to: URI whose scheme selects a registered
+                `EscalationHandler`. Only meaningful with `on_fail=ESCALATE`.
+            timeout_s: How long an escalation may take before being denied.
+            severity: Recorded on the event; breaks ties between rules failing
+                together at the same decision level.
+            hook: Run before (`"pre"`) or after (`"post"`) the tool executes.
+        """
+        validate_escalate_to(escalate_to, f"PolicySet {self.name!r}")
         self._rules.append(_Rule(predicate, on_fail, reason, escalate_to, timeout_s, severity, hook))
         self._hash_cache = None
         return self
@@ -214,14 +235,27 @@ class _CompositePolicy(Policy):
     def __init__(self, *children: Policy, name: str) -> None:
         self._children = children
         self.name = name
+        self._hash_cache: tuple[tuple[str, ...], str] | None = None
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self.name!r} hash={self.policy_hash}>"
 
     @property
     def policy_hash(self) -> str:
+        # Keyed on the children's own hashes rather than memoized outright: a
+        # child `PolicySet` can still gain rules through `require()` after the
+        # composite was built, and it has no way to notify its parents. Reading
+        # the children is cheap (they memoize), so this only skips the SHA-256.
+        child_hashes = tuple(child.policy_hash for child in self._children)
+        if self._hash_cache is not None and self._hash_cache[0] == child_hashes:
+            return self._hash_cache[1]
         digest = hashlib.sha256()
         digest.update(self.name.encode())
-        for child in self._children:
-            digest.update(child.policy_hash.encode())
-        return f"sha256:{digest.hexdigest()[:16]}"
+        for child_hash in child_hashes:
+            digest.update(child_hash.encode())
+        composite_hash = f"sha256:{digest.hexdigest()[:16]}"
+        self._hash_cache = (child_hashes, composite_hash)
+        return composite_hash
 
 
 class AndPolicy(_CompositePolicy):

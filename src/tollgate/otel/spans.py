@@ -9,6 +9,7 @@ reachable, or the event is sampled out.
 from __future__ import annotations
 
 import random
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -16,6 +17,14 @@ from typing import Any
 from tollgate.core.context import GuardContext
 from tollgate.decisions import ALLOW, BLOCK, GuardDecision
 from tollgate.otel.config import current_settings, otel_available
+
+#: A private RNG rather than the `random` module's shared one. Sampling would
+#: otherwise consume the process-wide random stream, silently changing the
+#: sequence any caller who seeded `random` for reproducibility depends on.
+#: Guarded by a lock because `random.Random` is not thread-safe and sampling
+#: runs on every recorded event.
+_rng = random.Random()
+_rng_lock = threading.Lock()
 
 
 def should_sample(decision: GuardDecision) -> bool:
@@ -30,10 +39,16 @@ def should_sample(decision: GuardDecision) -> bool:
     samples at `block_sample_rate`. ESCALATE used to fall through to
     `allow_sample_rate`, so dialing allows down silently thinned the
     approval-request spans too.
+
+    The comparison is strict (`<`), so `rate=0.0` samples nothing: `random()`
+    can return exactly 0.0, and `<=` let that one draw through a sample rate
+    the caller had explicitly turned off. `rate=1.0` still always samples,
+    since `random()` never returns 1.0.
     """
     settings = current_settings()
     rate = settings.allow_sample_rate if decision.action is ALLOW else settings.block_sample_rate
-    return random.random() <= rate
+    with _rng_lock:
+        return _rng.random() < rate
 
 
 @contextmanager

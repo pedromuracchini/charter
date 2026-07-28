@@ -18,7 +18,16 @@ from tollgate._scope import ExecutionScope
 
 
 class GuardContext(BaseModel):
-    """Everything a policy predicate needs to know about a single tool call."""
+    """Everything a policy predicate needs to know about a single tool call.
+
+    Treat it as read-only. The model is not frozen — the engine assigns
+    `ctx.result` between the pre and post hooks — but a predicate that mutates
+    it is changing what the ledger records *after* the values were already
+    evaluated, and `args` shares its nested values with the caller's own
+    arguments, so mutating `ctx.args["payload"]["x"]` reaches the tool itself.
+    `record_spend()` is the one sanctioned mutation, and it writes to the
+    injected `CallState` rather than to the context.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -110,9 +119,10 @@ class GuardContext(BaseModel):
     def calls_this_session(self, tool_name: str | None = None) -> int:
         """How many calls this session has attempted, including this one.
 
-        Defaults to *this* tool; pass a name for another tool, or `"*"` for
-        every tool combined. Counts attempts, not successes — a call that was
-        blocked still counts, so retrying a denial doesn't reset a rate limit.
+        Defaults to *this* tool; pass a name for another tool, or
+        `tollgate.state.ALL_TOOLS` (`"*"`) for every tool combined. Counts
+        attempts, not successes — a call that was blocked still counts, so
+        retrying a denial doesn't reset a rate limit.
 
         Returns 0 when no `CallState` is attached (a bare `@guard` outside any
         interceptor, or a `ledger.replay()`), so a history-dependent policy

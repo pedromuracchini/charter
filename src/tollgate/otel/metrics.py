@@ -13,12 +13,17 @@ No-ops whenever OTEL isn't configured or unavailable.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Literal
 
 from tollgate.decisions import BLOCK, GuardDecision
 from tollgate.otel.config import current_settings, otel_available
 
 _instruments: dict[str, Any] = {}
+#: Two threads emitting the same metric for the first time would otherwise both
+#: see a cache miss and each create an instrument, so one of the two would be
+#: written to and then immediately discarded.
+_instruments_lock = threading.Lock()
 
 
 def reset_instruments() -> None:
@@ -28,7 +33,8 @@ def reset_instruments() -> None:
     that was active when they were created, so without this a test that swaps
     providers keeps writing to the dead one.
     """
-    _instruments.clear()
+    with _instruments_lock:
+        _instruments.clear()
 
 
 def _meter() -> Any | None:
@@ -42,16 +48,18 @@ def _meter() -> Any | None:
 
 def _counter(name: str, meter: Any) -> Any:
     key = f"counter:{name}"
-    if key not in _instruments:
-        _instruments[key] = meter.create_counter(name)
-    return _instruments[key]
+    with _instruments_lock:
+        if key not in _instruments:
+            _instruments[key] = meter.create_counter(name)
+        return _instruments[key]
 
 
 def _histogram(name: str, meter: Any) -> Any:
     key = f"histogram:{name}"
-    if key not in _instruments:
-        _instruments[key] = meter.create_histogram(name, unit="ms")
-    return _instruments[key]
+    with _instruments_lock:
+        if key not in _instruments:
+            _instruments[key] = meter.create_histogram(name, unit="ms")
+        return _instruments[key]
 
 
 def record_decision(

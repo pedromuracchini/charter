@@ -9,12 +9,15 @@ unresolved escalation must never silently let the action through.
 from __future__ import annotations
 
 import logging
+import threading
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
 from urllib.parse import urlsplit
 
 from tollgate.core.context import GuardContext
 from tollgate.decisions import RuleResult
+from tollgate.errors import ConfigurationError, ConfigurationWarning
 
 logger = logging.getLogger("tollgate.escalation")
 
@@ -43,7 +46,11 @@ class FailSafeEscalationHandler(EscalationHandler):
     cannot actually be resolved must not be treated as an approval.
     """
 
+    def __repr__(self) -> str:
+        return "<FailSafeEscalationHandler denies-everything>"
+
     def escalate(self, ctx: GuardContext, rule_result: RuleResult) -> bool:
+        """Log the request and deny it."""
         logger.warning(
             "escalation %r for tool %r (target=%s, timeout=%ss) has no handler "
             "registered for its target scheme; denying by default (fail-safe)",
@@ -57,29 +64,72 @@ class FailSafeEscalationHandler(EscalationHandler):
 
 _DEFAULT_HANDLER = FailSafeEscalationHandler()
 _HANDLERS: dict[str, EscalationHandler] = {}
+#: Registration usually happens once at startup, but nothing stops an app from
+#: swapping a handler while requests are in flight, and `resolve_handler` runs
+#: on the hot path for every escalating rule.
+_handlers_lock = threading.Lock()
 
 
 def register_handler(scheme: str, handler: EscalationHandler) -> None:
-    """Register a handler for escalation targets of the form `f"{scheme}://..."`."""
-    _HANDLERS[scheme] = handler
+    """Register a handler for escalation targets of the form `f"{scheme}://..."`.
+
+    Raises:
+        ConfigurationError: If `scheme` is empty or itself looks like a URI.
+            `resolve_handler` matches on `urlsplit(target).scheme`, so
+            registering `"slack://approvals"` as the scheme would never match
+            anything.
+    """
+    if not scheme or "://" in scheme or ":" in scheme:
+        raise ConfigurationError(
+            f"escalation scheme must be a bare URI scheme like 'slack', not {scheme!r} — "
+            f"it is matched against urlsplit(escalate_to).scheme"
+        )
+    with _handlers_lock:
+        _HANDLERS[scheme] = handler
 
 
 def unregister_handler(scheme: str) -> EscalationHandler | None:
     """Remove the handler registered for `scheme`, returning it if there was
     one. Escalations to that scheme fall back to the fail-safe denier."""
-    return _HANDLERS.pop(scheme, None)
+    with _handlers_lock:
+        return _HANDLERS.pop(scheme, None)
 
 
 def registered_handlers() -> dict[str, EscalationHandler]:
     """A snapshot of the scheme → handler registry."""
-    return dict(_HANDLERS)
+    with _handlers_lock:
+        return dict(_HANDLERS)
 
 
 def reset_handlers() -> None:
     """Drop every registered handler, restoring the fail-safe default for all
     schemes. Intended for tests — the registry is process-global and otherwise
     leaks between them."""
-    _HANDLERS.clear()
+    with _handlers_lock:
+        _HANDLERS.clear()
+
+
+def validate_escalate_to(escalate_to: str | None, owner: str) -> None:
+    """Warn when an escalation target has no URI scheme to resolve.
+
+    `resolve_handler` matches on `urlsplit(target).scheme`, so a plain
+    `"security-team"` has an empty scheme, matches no registered handler, and
+    falls through to `FailSafeEscalationHandler` — which denies. Every call
+    guarded by that rule is then silently blocked forever, with nothing but a
+    log line at escalation time to explain why.
+
+    Warned rather than raised: deny-by-default is a legitimate configuration,
+    and a handler may legitimately be registered after the policy is built.
+    """
+    if escalate_to is None or urlsplit(escalate_to).scheme:
+        return
+    warnings.warn(
+        f"{owner}: escalate_to={escalate_to!r} has no URI scheme, so no handler can be "
+        f"matched and every escalation will be denied (fail-safe). Use a scheme passed "
+        f"to register_handler(), e.g. 'slack://{escalate_to}'.",
+        ConfigurationWarning,
+        stacklevel=3,
+    )
 
 
 def resolve_handler(escalate_to: str | None) -> EscalationHandler:
@@ -88,4 +138,5 @@ def resolve_handler(escalate_to: str | None) -> EscalationHandler:
     if escalate_to is None:
         return _DEFAULT_HANDLER
     scheme = urlsplit(escalate_to).scheme
-    return _HANDLERS.get(scheme, _DEFAULT_HANDLER)
+    with _handlers_lock:
+        return _HANDLERS.get(scheme, _DEFAULT_HANDLER)

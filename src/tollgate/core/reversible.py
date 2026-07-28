@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
+from tollgate.core.escalation import validate_escalate_to
 from tollgate.decisions import BLOCK, ESCALATE, RuleResult
 from tollgate.errors import ConfigurationError
 
@@ -61,8 +62,20 @@ class ReversibleAction:
         # Where the "high" intrinsic escalation is routed, and how long it may take.
         # Without a target every "high" action resolves to the fail-safe denier and
         # is therefore indistinguishable from "permanent" — see the module docstring.
+        if irreversibility_level == "high":
+            validate_escalate_to(escalate_to, f"ReversibleAction {name!r}")
         self.escalate_to = escalate_to
         self.timeout_s = timeout_s
+
+    def __repr__(self) -> str:
+        parts = [
+            repr(self.name),
+            f"level={self.irreversibility_level}",
+            f"undoable={self.is_undoable}",
+        ]
+        if self.escalate_to is not None:
+            parts.append(f"escalate_to={self.escalate_to!r}")
+        return f"<ReversibleAction {' '.join(parts)}>"
 
     def __call__(self, args: dict[str, Any]) -> Any:
         return self.do_fn(args)

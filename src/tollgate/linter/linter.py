@@ -17,12 +17,25 @@ from tollgate.core.reversible import ReversibleAction
 from tollgate.multiagent.registry import TollgateRegistry
 from tollgate.multiagent.scoped_policy import AgentScopedPolicy
 
-Severity = Literal["error", "warning"]
+LintSeverity = Literal["error", "warning"]
+
+#: Kept so `from tollgate.linter import Severity` still resolves. Renamed
+#: because `tollgate.Severity` is a different Literal entirely
+#: (`"high"/"medium"/"low"`, on a rule) and two exported types sharing a name
+#: while having disjoint values is a trap.
+Severity = LintSeverity
 
 
 @dataclass(frozen=True)
 class LintFinding:
-    severity: Severity
+    """One problem the linter found in a policy configuration.
+
+    `severity="error"` is what `tollgate lint` exits non-zero on, so it is
+    reserved for wiring that cannot work as written (a role-scoped policy with
+    no registry to resolve roles against). Everything else is a warning.
+    """
+
+    severity: LintSeverity
     message: str
     policy_name: str | None = None
 
