@@ -242,13 +242,20 @@ Every event is mirrored to that file regardless of the in-memory cap, and
 ## CLI
 
 ```bash
-uv run tollgate report --agent my_agent.py                       # policy inventory + coverage
+uv run tollgate --version
+uv run tollgate report --agent my_agent.py                        # policy inventory + coverage
 uv run tollgate report --agent my_agent.py --format mermaid       # coverage graph
 uv run tollgate report --agent my_agent.py --delegation           # delegation graph
-uv run tollgate lint my_agent.py                                  # static policy checks
+uv run tollgate report --agent my_agent.py --fail-under 0.8       # CI gate on tool coverage
+uv run tollgate lint --agent my_agent.py                          # static policy checks
 uv run tollgate replay evt_a3f9b2                                 # replay a ledger event
 uv run tollgate repl --agent my_agent.py                          # synthetic-context REPL
+uv run tollgate export --format narrative --ledger audit.jsonl    # plain-English audit summary
+uv run tollgate export --format fixtures -o test_policies.py      # pytest tests from real decisions
 ```
+
+`report --fail-under` and `lint` both exit non-zero on failure, so they work as
+CI gates. `export` accepts `json`, `csv`, `narrative` and `fixtures`.
 
 The CLI loads `my_agent.py` as a plain module and expects a module-level
 `POLICIES: list[Policy]` (and, optionally, `REGISTRY` / `TOOL_NAMES` /

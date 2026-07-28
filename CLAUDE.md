@@ -463,7 +463,13 @@ class — it's just what `cli/main.py` greps for. See `examples/clinical.py` for
 the convention in practice. `tollgate report --ledger path.jsonl` merges
 events from a JSONL ledger sink file (written via
 `ActionLedger.configure(sink_path=...)`) with whatever's in the current
-process's in-memory ledger.
+process's in-memory ledger. `tollgate export` reaches the same file for the
+non-graph formats (`json`/`csv`/`narrative`/`fixtures`).
+
+Both CI gates exit non-zero: `lint` on an `error`-severity finding, and
+`report --fail-under RATIO` when tool coverage falls below the threshold.
+`--agent` is the flag everywhere; `lint` also still accepts its historical
+positional argument.
 
 ### The process-wide ledger is configured, not constructed
 

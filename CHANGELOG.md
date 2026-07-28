@@ -36,6 +36,10 @@ initial implementation.
   `delegation_depth()` counts hops (`len - 1`) rather than entries — so every
   existing `max_delegation_depth_policy` threshold keeps its meaning. Callers
   register ancestors only; everything downstream reads the full path.
+- **`report --delegation --format json` silently emitted mermaid** instead of
+  erroring, hiding the fact that `delegation_graph()` has no JSON writer. It
+  now exits with a message naming the supported formats. The JSON report also
+  serializes `PolicyStats` via `dataclasses.asdict` rather than `vars()`.
 - **ALLOW events were sampled twice, and ESCALATE spans used the wrong rate.**
   `_record_allow()` rolled against `allow_sample_rate` for the ledger, then
   `evaluate_span()` rolled again at the same rate — the effective span rate was
@@ -121,6 +125,15 @@ initial implementation.
   Now: an empty child result makes `NotPolicy` not-applicable too (`[]`).
 
 ### Added
+- **CLI: `--version`, `report --fail-under`, and an `export` command.**
+  `report` always exited 0, so it was useless as a CI gate; `--fail-under
+  RATIO` now exits non-zero when tool coverage falls below the threshold (the
+  report is still printed, so CI logs show what failed).
+  `tollgate export --format json|csv|narrative|fixtures [--output PATH]`
+  reaches `export_compliance_report`, `narrative()` and
+  `fixtures_from_events()`, none of which had a CLI command before. `lint`
+  takes `--agent` like every other subcommand, still accepting its historical
+  positional form.
 - **`tollgate.policies` — a library of ready-made policies.** Previously every
   policy was something you wrote from a blank lambda, so each project
   re-derived the same handful of rules. Ships `no_secrets_in_args`,

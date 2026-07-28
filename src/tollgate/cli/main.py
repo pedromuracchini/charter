@@ -13,18 +13,22 @@ import argparse
 import importlib.util
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
+from tollgate import __version__
 from tollgate.core.policy_set import Policy
 from tollgate.ledger.event import LedgerEvent
-from tollgate.ledger.ledger import ActionLedger
+from tollgate.ledger.ledger import ActionLedger, _events_to_csv
 from tollgate.ledger.ledger import replay as replay_event
 from tollgate.linter.linter import lint as lint_policies
 from tollgate.multiagent.registry import TollgateRegistry
 from tollgate.report.graph import delegation_graph, policy_graph
+from tollgate.report.narrative import narrative
 from tollgate.report.policy_report import DEFAULT_WINDOW_HOURS, build_report
+from tollgate.testing.harness import fixtures_from_events
 from tollgate.testing.repl import run_repl
 
 
@@ -60,6 +64,12 @@ def _cmd_report(args: argparse.Namespace) -> None:
     events = _load_ledger_events(args.ledger)
 
     if args.delegation:
+        if args.format not in ("dot", "mermaid", "text"):
+            # Silently emitting mermaid for `--format json` hid the fact that
+            # delegation_graph() has no JSON writer.
+            raise SystemExit(
+                f"--delegation does not support --format {args.format}; use dot or mermaid"
+            )
         delegation_format: Literal["dot", "mermaid"] = "dot" if args.format == "dot" else "mermaid"
         print(delegation_graph(events, format=delegation_format))
         return
@@ -83,27 +93,34 @@ def _cmd_report(args: argparse.Namespace) -> None:
                     "coverage_ratio": report.coverage_ratio,
                     "covered_tools": list(report.covered_tools),
                     "uncovered_tools": list(report.uncovered_tools),
-                    "policies": [vars(p) for p in report.policies],
+                    "policies": [asdict(p) for p in report.policies],
                 },
                 indent=2,
             )
         )
-        return
+    else:
+        total = len(report.covered_tools) + len(report.uncovered_tools)
+        print(f"coverage: {report.coverage_ratio:.0%} ({len(report.covered_tools)}/{total} tools)")
+        if report.uncovered_tools:
+            print(f"uncovered tools: {', '.join(report.uncovered_tools)}")
+        for stat in report.policies:
+            print(
+                f"- {stat.name} [{stat.policy_hash}] (last {report.window_hours:g}h) "
+                f"block={stat.block_count} escalate={stat.escalate_count} allow={stat.allow_count} "
+                f"tools={list(stat.tools_covered)}"
+            )
 
-    total = len(report.covered_tools) + len(report.uncovered_tools)
-    print(f"coverage: {report.coverage_ratio:.0%} ({len(report.covered_tools)}/{total} tools)")
-    if report.uncovered_tools:
-        print(f"uncovered tools: {', '.join(report.uncovered_tools)}")
-    for stat in report.policies:
-        print(
-            f"- {stat.name} [{stat.policy_hash}] (last {report.window_hours:g}h) "
-            f"block={stat.block_count} escalate={stat.escalate_count} allow={stat.allow_count} "
-            f"tools={list(stat.tools_covered)}"
+    if args.fail_under is not None and report.coverage_ratio < args.fail_under:
+        raise SystemExit(
+            f"coverage {report.coverage_ratio:.0%} is below the required {args.fail_under:.0%}"
         )
 
 
 def _cmd_lint(args: argparse.Namespace) -> None:
-    module = _load_module(args.agent)
+    agent = args.agent or args.agent_positional
+    if agent is None:
+        raise SystemExit("lint requires --agent PATH")
+    module = _load_module(agent)
     policies = _policies_from_module(module)
     registry: TollgateRegistry | None = getattr(module, "REGISTRY", None)
     tool_names = getattr(module, "TOOL_NAMES", None)
@@ -138,12 +155,52 @@ def _cmd_repl(args: argparse.Namespace) -> None:
     run_repl(policies)
 
 
+def _cmd_export(args: argparse.Namespace) -> None:
+    """Dump the ledger in one of its non-graph formats.
+
+    `export_compliance_report`, `narrative()` and `fixtures_from_events()` all
+    existed but had no CLI command, so the only way to reach them was to write
+    a Python script.
+    """
+    events = _load_ledger_events(args.ledger)
+    if args.format == "json":
+        output = json.dumps([e.model_dump() for e in events], indent=2)
+    elif args.format == "csv":
+        output = _events_to_csv(events)
+    elif args.format == "narrative":
+        output = narrative(events, audience=args.audience)
+    else:
+        output = fixtures_from_events(events)
+
+    if args.output:
+        Path(args.output).write_text(output, encoding="utf-8")
+        print(f"wrote {len(events)} event(s) to {args.output}", file=sys.stderr)
+    else:
+        print(output)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="tollgate")
+    parser = argparse.ArgumentParser(
+        prog="tollgate",
+        description="Inspect, lint and replay Tollgate policies.",
+        epilog=(
+            "An agent file is loaded as a plain Python module and read for a "
+            "module-level POLICIES list (plus optional REGISTRY / TOOL_NAMES / "
+            "ACTIONS). NOTE: this executes the file — only point it at code you trust."
+        ),
+    )
+    parser.add_argument("--version", action="version", version=f"tollgate {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     report = subparsers.add_parser("report", help="inspect an agent's registered policies")
     report.add_argument("--agent", required=True)
+    report.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        metavar="RATIO",
+        help="exit non-zero if tool coverage is below this ratio (e.g. 0.8) — for CI",
+    )
     report.add_argument("--format", choices=["text", "json", "dot", "mermaid"], default="text")
     report.add_argument("--delegation", action="store_true")
     report.add_argument("--ledger", default=None, help="optional JSONL ledger sink file to include")
@@ -161,7 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_cmd_report)
 
     lint = subparsers.add_parser("lint", help="lint an agent's registered policies")
-    lint.add_argument("agent")
+    # `--agent` everywhere: this used to be the one positional, which meant
+    # `tollgate lint x.py` but `tollgate report --agent x.py`. The positional
+    # is still accepted so existing invocations keep working.
+    lint.add_argument("--agent", default=None)
+    lint.add_argument("agent_positional", nargs="?", default=None, help=argparse.SUPPRESS)
     lint.set_defaults(func=_cmd_lint)
 
     replay = subparsers.add_parser("replay", help="replay a ledger event")
@@ -172,6 +233,23 @@ def build_parser() -> argparse.ArgumentParser:
     repl = subparsers.add_parser("repl", help="interactive policy REPL")
     repl.add_argument("--agent", required=True)
     repl.set_defaults(func=_cmd_repl)
+
+    export = subparsers.add_parser("export", help="dump the ledger for audit or test generation")
+    export.add_argument(
+        "--format",
+        choices=["json", "csv", "narrative", "fixtures"],
+        default="json",
+        help="fixtures emits a runnable pytest module built from recorded decisions",
+    )
+    export.add_argument("--ledger", default=None, help="JSONL ledger sink file to read")
+    export.add_argument("--output", default=None, metavar="PATH", help="write here instead of stdout")
+    export.add_argument(
+        "--audience",
+        choices=["technical", "non-technical"],
+        default="non-technical",
+        help="narrative format only",
+    )
+    export.set_defaults(func=_cmd_export)
 
     return parser
 
