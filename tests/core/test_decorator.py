@@ -39,6 +39,7 @@ def test_post_block_triggers_auto_undo_for_reversible_action():
         irreversibility_level="low",
         pre_snapshot=lambda args: {"before": True},
     )
+
     def post_check(ctx):
         return ctx.result["rows_affected"] == 1
 
@@ -62,7 +63,9 @@ def test_on_fail_allow_logs_but_never_blocks():
 
 
 def test_escalate_denied_by_default_blocks():
-    @guard(pre=lambda ctx: False, on_fail=ESCALATE, reason="needs approval", escalate_to="slack://unconfigured")
+    @guard(
+        pre=lambda ctx: False, on_fail=ESCALATE, reason="needs approval", escalate_to="slack://unconfigured"
+    )
     def risky():
         return "done"
 

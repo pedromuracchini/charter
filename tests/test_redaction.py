@@ -180,9 +180,7 @@ def test_the_escalation_summary_is_redacted():
     from tollgate.decisions import ESCALATE, RuleResult
     from tollgate.escalation._message import format_escalation_summary
 
-    ctx = GuardContext.build(
-        tool_name="transfer", args={"key": AWS_KEY}, scope=ExecutionScope()
-    )
+    ctx = GuardContext.build(tool_name="transfer", args={"key": AWS_KEY}, scope=ExecutionScope())
     summary = format_escalation_summary(
         ctx, RuleResult(passed=False, on_fail=ESCALATE, reason="approve", policy_name="p")
     )
@@ -198,9 +196,7 @@ def test_the_escalation_summary_is_truncated():
     from tollgate.decisions import ESCALATE, RuleResult
     from tollgate.escalation._message import MAX_ARGS_CHARS, format_escalation_summary
 
-    ctx = GuardContext.build(
-        tool_name="upload", args={"blob": "x" * 50_000}, scope=ExecutionScope()
-    )
+    ctx = GuardContext.build(tool_name="upload", args={"blob": "x" * 50_000}, scope=ExecutionScope())
     summary = format_escalation_summary(
         ctx, RuleResult(passed=False, on_fail=ESCALATE, reason="approve", policy_name="p")
     )
@@ -228,9 +224,7 @@ def test_sensitive_key_matching_is_case_insensitive():
 
 
 def test_nested_structures_are_walked():
-    out = redact_args(
-        {"payload": {"headers": [{"x": f"Bearer {AWS_KEY}"}], "meta": ("a", AWS_KEY)}}
-    )
+    out = redact_args({"payload": {"headers": [{"x": f"Bearer {AWS_KEY}"}], "meta": ("a", AWS_KEY)}})
     assert AWS_KEY not in str(out)
     # Container types survive the round trip.
     assert isinstance(out["payload"]["headers"], list)
@@ -283,7 +277,7 @@ def test_extra_patterns_add_to_the_defaults():
 def test_a_custom_redactor_can_be_installed():
     class Upper:
         def redact_args(self, args):
-            return {k: "SCRUBBED" for k in args}
+            return dict.fromkeys(args, "SCRUBBED")
 
         def redact_text(self, text):
             return "SCRUBBED"

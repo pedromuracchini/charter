@@ -27,7 +27,7 @@ def _ctx():
 
 
 def _rule_result(**overrides):
-    base = dict(passed=False, on_fail=ESCALATE, reason="r", policy_name="p")
+    base = {"passed": False, "on_fail": ESCALATE, "reason": "r", "policy_name": "p"}
     base.update(overrides)
     return RuleResult(**base)
 

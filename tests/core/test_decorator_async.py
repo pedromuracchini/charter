@@ -66,7 +66,9 @@ async def test_async_on_fail_allow_logs_but_never_blocks():
 
 
 async def test_async_escalate_denied_by_default_blocks():
-    @guard(pre=lambda ctx: False, on_fail=ESCALATE, reason="needs approval", escalate_to="slack://unconfigured")
+    @guard(
+        pre=lambda ctx: False, on_fail=ESCALATE, reason="needs approval", escalate_to="slack://unconfigured"
+    )
     async def risky():
         return "done"
 

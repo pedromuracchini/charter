@@ -7,6 +7,7 @@ actually been recorded.
 
 from __future__ import annotations
 
+import itertools
 import json
 from collections.abc import Iterable
 from typing import Literal
@@ -63,7 +64,7 @@ def _delegation_edges(
     tool_edges: dict[tuple[str, str], str] = {}
     for event in events:
         chain = event.delegation_chain
-        for caller, callee in zip(chain, chain[1:], strict=False):
+        for caller, callee in itertools.pairwise(chain):
             agent_edges[(caller, callee)] = event.trust_level
         if event.caller_agent_id:
             label = _EDGE_LABEL.get(event.decision, event.decision.lower())

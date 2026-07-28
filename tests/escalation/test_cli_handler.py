@@ -13,7 +13,13 @@ def _ctx():
 
 
 def _rule_result(**overrides):
-    base = dict(passed=False, on_fail=ESCALATE, reason="dangerous action", policy_name="p", timeout_s=5)
+    base = {
+        "passed": False,
+        "on_fail": ESCALATE,
+        "reason": "dangerous action",
+        "policy_name": "p",
+        "timeout_s": 5,
+    }
     base.update(overrides)
     return RuleResult(**base)
 

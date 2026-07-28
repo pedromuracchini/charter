@@ -21,7 +21,13 @@ def _ctx(**args):
 
 
 def _rule_result(**overrides):
-    base = dict(passed=False, on_fail=ESCALATE, reason="large transfer", policy_name="p", timeout_s=5)
+    base = {
+        "passed": False,
+        "on_fail": ESCALATE,
+        "reason": "large transfer",
+        "policy_name": "p",
+        "timeout_s": 5,
+    }
     base.update(overrides)
     return RuleResult(**base)
 
@@ -109,7 +115,7 @@ class _ApprovalRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({"approved": approved}).encode())
 
-    def log_message(self, *args):  # noqa: A003 - silence request logging in test output
+    def log_message(self, *args):
         pass
 
 

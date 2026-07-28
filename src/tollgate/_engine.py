@@ -159,9 +159,7 @@ async def _run_with_timeout_async(
     """
     try:
         if inspect.iscoroutinefunction(handler_escalate):
-            result = await asyncio.wait_for(
-                handler_escalate(ctx, rule_result), timeout=rule_result.timeout_s
-            )
+            result = await asyncio.wait_for(handler_escalate(ctx, rule_result), timeout=rule_result.timeout_s)
         else:
             loop = asyncio.get_running_loop()
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -260,9 +258,7 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[Gua
         handler = resolve_handler(rule_result.escalate_to)
         start = time.perf_counter()
         approved = _run_with_timeout(lambda: handler.escalate(ctx, rule_result), rule_result.timeout_s)
-        return _escalation_decision(
-            rule_result, ctx, approved, (time.perf_counter() - start) * 1000
-        )
+        return _escalation_decision(rule_result, ctx, approved, (time.perf_counter() - start) * 1000)
     decision = GuardDecision(
         action=rule_result.on_fail,
         reason=rule_result.reason,
@@ -282,9 +278,7 @@ async def _resolve_async(rule_result: RuleResult, ctx: GuardContext, mode: str) 
         handler = resolve_handler(rule_result.escalate_to)
         start = time.perf_counter()
         approved = await _run_with_timeout_async(handler.escalate, ctx, rule_result)
-        return _escalation_decision(
-            rule_result, ctx, approved, (time.perf_counter() - start) * 1000
-        )
+        return _escalation_decision(rule_result, ctx, approved, (time.perf_counter() - start) * 1000)
     decision = GuardDecision(
         action=rule_result.on_fail,
         reason=rule_result.reason,
@@ -377,9 +371,7 @@ def _undo_unavailable(reversible: ReversibleAction, decision: GuardDecision) -> 
         "post-BLOCK on %r, which has no undo_fn — the action already ran and was NOT reverted",
         reversible.name,
     )
-    return None, replace(
-        decision, reason=f"{decision.reason} (no undo_fn configured — action NOT reverted)"
-    )
+    return None, replace(decision, reason=f"{decision.reason} (no undo_fn configured — action NOT reverted)")
 
 
 def _undo_failed(
@@ -457,7 +449,7 @@ def _aggregate_policy_name(names: list[str]) -> str | None:
 def _aggregate_policy_hash(contributors: list[tuple[str, str | None]]) -> str | None:
     """The contributing policy's hash, but only when exactly one policy
     contributed — a `+`-joined label has no single fingerprint to report."""
-    unique = {name: policy_hash for name, policy_hash in contributors}
+    unique = dict(contributors)
     if len(unique) != 1:
         return None
     return next(iter(unique.values()))

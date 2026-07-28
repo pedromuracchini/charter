@@ -6,16 +6,16 @@ import pytest
 
 pytest.importorskip("mcp")
 
-import mcp.types as types  # noqa: E402
-from mcp.server.fastmcp import FastMCP  # noqa: E402
-from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
+import mcp.types as types
+from mcp.server.fastmcp import FastMCP
+from mcp.shared.memory import create_connected_server_and_client_session
 
-from tollgate import TollgateInterceptor, wrap  # noqa: E402
-from tollgate.adapters.mcp import guard_mcp_server, guard_mcp_session  # noqa: E402
-from tollgate.core.policy_set import PolicySet  # noqa: E402
-from tollgate.decisions import BLOCK, GuardBlocked  # noqa: E402
-from tollgate.errors import ConfigurationError  # noqa: E402
-from tollgate.ledger.ledger import ActionLedger  # noqa: E402
+from tollgate import TollgateInterceptor, wrap
+from tollgate.adapters.mcp import guard_mcp_server, guard_mcp_session
+from tollgate.core.policy_set import PolicySet
+from tollgate.decisions import BLOCK, GuardBlocked
+from tollgate.errors import ConfigurationError
+from tollgate.ledger.ledger import ActionLedger
 
 
 def _server() -> FastMCP:

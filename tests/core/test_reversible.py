@@ -245,9 +245,7 @@ def test_high_with_an_approving_handler_actually_executes():
 
 def test_high_without_escalate_to_still_fails_safe():
     """The old behavior stays the default — an unrouted escalation denies."""
-    action = ReversibleAction(
-        do_fn=lambda a: a, undo_fn=None, name="x", irreversibility_level="high"
-    )
+    action = ReversibleAction(do_fn=lambda a: a, undo_fn=None, name="x", irreversibility_level="high")
     check = action.intrinsic_check()
     assert check is not None
     assert check.escalate_to is None

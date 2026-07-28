@@ -1,10 +1,138 @@
 """The public API surface is part of the contract — check it holds together."""
 
 import importlib
+import inspect
 
 import pytest
 
 import tollgate
+
+#: A frozen snapshot of everything `import tollgate` promises. Adding a name
+#: here is a deliberate act; a name disappearing from it is a breaking change
+#: for someone. Asserting only that `__all__` was *sorted* let both happen
+#: silently, which is the wrong guarantee for a package heading to 1.0.
+#:
+#: Ordering matches ruff's RUF022 (all-caps constants first, then classes, then
+#: functions), which is what `ruff check --fix` enforces on the source.
+PUBLIC_API = [
+    "ALLOW",
+    "ALL_TOOLS",
+    "BLOCK",
+    "ESCALATE",
+    "PII_PATTERNS",
+    "SECRET_PATTERNS",
+    "ActionLedger",
+    "AdapterError",
+    "AgentIdentity",
+    "AgentScopedPolicy",
+    "AndPolicy",
+    "CLIEscalationHandler",
+    "CallState",
+    "ConfigurationError",
+    "ConfigurationWarning",
+    "ContributingRule",
+    "Decision",
+    "EscalationError",
+    "EscalationHandler",
+    "ExecutionScope",
+    "FailSafeEscalationHandler",
+    "GuardBlocked",
+    "GuardContext",
+    "GuardDecision",
+    "Hook",
+    "IrreversibilityLevel",
+    "LedgerError",
+    "LedgerEvent",
+    "LedgerEventNotFound",
+    "LintFinding",
+    "LintSeverity",
+    "Mode",
+    "NotPolicy",
+    "NullRedactor",
+    "OrPolicy",
+    "PatternRedactor",
+    "Policy",
+    "PolicyReport",
+    "PolicySet",
+    "Redactor",
+    "ReplayResult",
+    "ReversibleAction",
+    "RuleResult",
+    "Severity",
+    "SlackEscalationHandler",
+    "TollgateError",
+    "TollgateInterceptor",
+    "TollgateRegistry",
+    "TollgateWarning",
+    "WebhookEscalationHandler",
+    "__version__",
+    "build_report",
+    "configure_ledger",
+    "configure_otel",
+    "configure_redaction",
+    "current_redactor",
+    "current_scope",
+    "delegation_depth",
+    "extend_chain",
+    "guard",
+    "lint",
+    "max_delegation_depth_policy",
+    "pick_decision",
+    "policies",
+    "register_handler",
+    "registered_handlers",
+    "replay",
+    "reset_handlers",
+    "reset_ledger",
+    "reset_otel",
+    "reset_redaction",
+    "session",
+    "unregister_handler",
+    "wrap",
+]
+
+_KIND_MARKER = {
+    inspect.Parameter.POSITIONAL_ONLY: "/",
+    inspect.Parameter.KEYWORD_ONLY: "*",
+    inspect.Parameter.VAR_POSITIONAL: "*",
+    inspect.Parameter.VAR_KEYWORD: "**",
+}
+
+
+def signature_shape(func) -> str:
+    """Parameter names, kinds and defaults — the part callers depend on.
+
+    Annotations are deliberately excluded: adding or refining a type hint is
+    not a breaking change, while renaming a parameter, reordering two, or
+    making one keyword-only silently breaks working code.
+    """
+    parts = []
+    for parameter in inspect.signature(func).parameters.values():
+        marker = _KIND_MARKER.get(parameter.kind, "")
+        default = "" if parameter.default is inspect.Parameter.empty else f"={parameter.default!r}"
+        parts.append(f"{marker}{parameter.name}{default}")
+    return ", ".join(parts)
+
+
+#: Shapes of the entry points most user code is written against. A silent
+#: rename or reordering here breaks callers without breaking any test that only
+#: checks the name still resolves.
+PINNED_SIGNATURES = {
+    "guard": (
+        "pre=None, post=None, *on_fail, *reason, *escalate_to=None, *timeout_s=300, *severity='medium'"
+    ),
+    "wrap": "agent, interceptor",
+    "replay": "event_id, policies=None, hook='pre'",
+    "configure_ledger": "*sink_path=None, *max_events=10000",
+    "configure_redaction": (
+        "*enabled=True, *keys=None, *include_pii=False, *redact_credit_cards=None, "
+        "*extra_patterns=(), *placeholder='[REDACTED]', *redactor=None"
+    ),
+    "configure_otel": "tracer_provider=None, allow_sample_rate=1.0, block_sample_rate=1.0",
+    "lint": "policies, tool_names=None, registry=None, actions=None",
+    "session": "**overrides",
+    "pick_decision": "failing",
+}
 
 #: Every sub-package that re-exports something. `from tollgate.ledger import
 #: ActionLedger` used to fail outright: these files were all 0 bytes.
@@ -27,9 +155,26 @@ def test_every_name_in_all_actually_exists():
     assert missing == []
 
 
-def test_all_is_sorted():
-    """Keeps diffs small and makes a missing entry easy to spot."""
-    assert tollgate.__all__ == sorted(tollgate.__all__)
+def test_public_api_matches_the_snapshot():
+    """Fails on any addition or removal, so neither happens by accident.
+
+    Update `PUBLIC_API` in the same commit that changes the surface — the diff
+    on this list is the reviewable record of an API change.
+    """
+    assert list(tollgate.__all__) == PUBLIC_API
+
+
+@pytest.mark.parametrize("name", sorted(PINNED_SIGNATURES))
+def test_entry_point_signatures_are_stable(name):
+    assert signature_shape(getattr(tollgate, name)) == PINNED_SIGNATURES[name]
+
+
+def test_interceptor_call_keeps_tool_name_and_func_positional_only():
+    """They are positional-only so a tool argument may be named `tool_name` or
+    `func` without colliding — a regression here silently breaks such tools."""
+    parameters = inspect.signature(tollgate.TollgateInterceptor.call).parameters
+    for name in ("tool_name", "func"):
+        assert parameters[name].kind is inspect.Parameter.POSITIONAL_ONLY
 
 
 @pytest.mark.parametrize("module_name", SUBPACKAGES)

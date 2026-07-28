@@ -80,8 +80,8 @@ def no_destructive_sql(
     )
     if not allow_unbounded_writes:
         policy.require(
-            lambda ctx: not (
-                _SQL_UNBOUNDED_DELETE.search(read(ctx)) or _SQL_UNBOUNDED_UPDATE.search(read(ctx))
+            lambda ctx: (
+                not (_SQL_UNBOUNDED_DELETE.search(read(ctx)) or _SQL_UNBOUNDED_UPDATE.search(read(ctx)))
             ),
             on_fail=on_fail,
             reason=f"{arg} is a DELETE or UPDATE with no WHERE clause",
@@ -102,7 +102,7 @@ def no_destructive_shell(
 ) -> PolicySet:
     """Reject `rm -rf`, `mkfs`, `dd of=/dev/...`, shutdown and friends in `ctx.args[arg]`.
 
-        no_destructive_shell(tool_names=("run_shell",))
+    no_destructive_shell(tool_names=("run_shell",))
     """
     read = _arg_getter(arg)
     allowed = set(tool_names) if tool_names is not None else None

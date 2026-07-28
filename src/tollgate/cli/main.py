@@ -18,6 +18,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
+from pydantic import ValidationError
+
 from tollgate import __version__
 from tollgate.core.policy_set import Policy
 from tollgate.ledger.event import LedgerEvent
@@ -51,11 +53,34 @@ def _policies_from_module(module: ModuleType) -> list[Policy]:
 
 
 def _load_ledger_events(ledger_path: str | None) -> list[LedgerEvent]:
+    """Merge the in-memory ledger with events read back from a JSONL sink.
+
+    A malformed line is skipped with a warning on stderr rather than aborting
+    the whole read. The sink is an append-only log that a process can be killed
+    partway through writing, so a truncated final line is an ordinary thing to
+    find — refusing to report on 10,000 good events because the last one is
+    half-written would make the tooling useless exactly when it is needed.
+    """
     events = ActionLedger.current().events()
-    if ledger_path:
-        with open(ledger_path, encoding="utf-8") as f:
-            events = events + [LedgerEvent.model_validate_json(line) for line in f if line.strip()]
-    return events
+    if not ledger_path:
+        return events
+
+    parsed: list[LedgerEvent] = []
+    skipped = 0
+    with Path(ledger_path).open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                parsed.append(LedgerEvent.model_validate_json(line))
+            except ValidationError:
+                skipped += 1
+    if skipped:
+        print(
+            f"warning: skipped {skipped} unparseable line(s) in {ledger_path}",
+            file=sys.stderr,
+        )
+    return events + parsed
 
 
 def _cmd_report(args: argparse.Namespace) -> None:
@@ -67,9 +92,7 @@ def _cmd_report(args: argparse.Namespace) -> None:
         if args.format not in ("dot", "mermaid", "text"):
             # Silently emitting mermaid for `--format json` hid the fact that
             # delegation_graph() has no JSON writer.
-            raise SystemExit(
-                f"--delegation does not support --format {args.format}; use dot or mermaid"
-            )
+            raise SystemExit(f"--delegation does not support --format {args.format}; use dot or mermaid")
         delegation_format: Literal["dot", "mermaid"] = "dot" if args.format == "dot" else "mermaid"
         print(delegation_graph(events, format=delegation_format))
         return
@@ -111,9 +134,7 @@ def _cmd_report(args: argparse.Namespace) -> None:
             )
 
     if args.fail_under is not None and report.coverage_ratio < args.fail_under:
-        raise SystemExit(
-            f"coverage {report.coverage_ratio:.0%} is below the required {args.fail_under:.0%}"
-        )
+        raise SystemExit(f"coverage {report.coverage_ratio:.0%} is below the required {args.fail_under:.0%}")
 
 
 def _cmd_lint(args: argparse.Namespace) -> None:

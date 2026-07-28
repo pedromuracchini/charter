@@ -79,9 +79,7 @@ def build_interceptor() -> TollgateInterceptor:
             budget_policy(100.0, lambda ctx: ctx.args["amount"], tool_name="transfer"),
             # Cost is only in the *response*, so the cap is "stop once spent".
             # Prices are per million tokens, the way providers quote them.
-            token_budget_policy(
-                2.00, input_price=3.00, output_price=15.00, tool_name="call_llm"
-            ),
+            token_budget_policy(2.00, input_price=3.00, output_price=15.00, tool_name="call_llm"),
         ],
     )
 

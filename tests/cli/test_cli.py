@@ -8,7 +8,7 @@ from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, GuardBlocked
 from tollgate.ledger.ledger import ActionLedger
 
-AGENT_MODULE = '''
+AGENT_MODULE = """
 from tollgate import PolicySet, BLOCK
 
 policy = PolicySet("smoke_policy")
@@ -16,7 +16,7 @@ policy.require(lambda ctx: ctx.args.get("x", 0) > 0, on_fail=BLOCK, reason="x mu
 
 POLICIES = [policy]
 TOOL_NAMES = ["do_thing", "do_other_thing"]
-'''
+"""
 
 
 def _write_agent(tmp_path):

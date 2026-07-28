@@ -50,9 +50,7 @@ def test_uncovered_tools_detected():
 def test_flags_high_action_without_escalate_to():
     from tollgate.core.reversible import ReversibleAction
 
-    unrouted = ReversibleAction(
-        do_fn=lambda a: a, undo_fn=None, name="wipe_db", irreversibility_level="high"
-    )
+    unrouted = ReversibleAction(do_fn=lambda a: a, undo_fn=None, name="wipe_db", irreversibility_level="high")
     routed = ReversibleAction(
         do_fn=lambda a: a,
         undo_fn=None,

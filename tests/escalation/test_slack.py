@@ -17,7 +17,13 @@ def _ctx():
 
 
 def _rule_result(**overrides):
-    base = dict(passed=False, on_fail=ESCALATE, reason="dangerous action", policy_name="p", timeout_s=5)
+    base = {
+        "passed": False,
+        "on_fail": ESCALATE,
+        "reason": "dangerous action",
+        "policy_name": "p",
+        "timeout_s": 5,
+    }
     base.update(overrides)
     return RuleResult(**base)
 
@@ -186,9 +192,12 @@ def test_end_to_end_denied_raises_guard_blocked():
         _response({"ok": True, "ts": "1.1"}),
         _response({"ok": True, "message": {"reactions": [{"name": "x", "users": ["U_OK"]}]}}),
     ]
-    with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
-    ), pytest.raises(GuardBlocked):
+    with (
+        patch(
+            "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
+        ),
+        pytest.raises(GuardBlocked),
+    ):
         evaluate_call(
             tool_name="delete_prod_db",
             args={"id": 1},

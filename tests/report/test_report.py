@@ -7,18 +7,18 @@ from tollgate.report.policy_report import build_report
 
 
 def _event(**overrides):
-    base = dict(
-        event_id="evt_1",
-        ts="2026-06-03T14:32:01Z",
-        tool="delete_record",
-        args={},
-        policy="p1",
-        decision="BLOCK",
-        reason="r",
-        caller_agent_id="executor_agent",
-        delegation_chain=["orchestrator", "executor_agent"],
-        trust_level=1,
-    )
+    base = {
+        "event_id": "evt_1",
+        "ts": "2026-06-03T14:32:01Z",
+        "tool": "delete_record",
+        "args": {},
+        "policy": "p1",
+        "decision": "BLOCK",
+        "reason": "r",
+        "caller_agent_id": "executor_agent",
+        "delegation_chain": ["orchestrator", "executor_agent"],
+        "trust_level": 1,
+    }
     base.update(overrides)
     return LedgerEvent(**base)
 

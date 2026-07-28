@@ -295,9 +295,7 @@ def test_dry_run_escalation_is_recorded_as_not_resolved():
     configure_otel()
 
     policy = PolicySet("needs_approval")
-    policy.require(
-        lambda ctx: False, on_fail=ESCALATE, reason="approve me", escalate_to="unrouted://x"
-    )
+    policy.require(lambda ctx: False, on_fail=ESCALATE, reason="approve me", escalate_to="unrouted://x")
     evaluate_call(
         tool_name="transfer",
         args={},
@@ -322,9 +320,7 @@ def test_delegation_depth_metric_is_actually_emitted():
     configure_otel()
 
     scope = ExecutionScope(caller_agent_id="executor", delegation_chain=("orchestrator", "executor"))
-    evaluate_call(
-        tool_name="t", args={}, invoke=lambda: None, policies=[], mode="enforce", scope=scope
-    )
+    evaluate_call(tool_name="t", args={}, invoke=lambda: None, policies=[], mode="enforce", scope=scope)
 
     points = _collect(reader)["tollgate.delegation_depth"]
     assert len(points) == 1
