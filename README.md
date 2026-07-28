@@ -227,6 +227,7 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `tollgate[langgraph]`). |
 | `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `tollgate[openai-agents]`). |
 | `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `tollgate[mcp]`). |
+| `builtin_policies.py` | Every policy in `tollgate.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
 ## Audit trail
