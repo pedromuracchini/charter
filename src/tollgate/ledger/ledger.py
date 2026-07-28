@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import threading
 from collections import deque
 from collections.abc import Iterable
@@ -27,6 +28,9 @@ from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import Policy
 from tollgate.decisions import RuleResult, pick_decision
 from tollgate.ledger.event import LedgerEvent
+from tollgate.redaction import contains_placeholder
+
+logger = logging.getLogger("tollgate.ledger")
 
 ComplianceFormat = Literal["json", "csv"]
 GraphFormat = Literal["dot", "mermaid", "json"]
@@ -190,6 +194,11 @@ class ReplayResult:
     original_decision: str
     new_results: tuple[RuleResult, ...] | None
     changed: bool
+    #: Whether the stored arguments were redacted before being written. When
+    #: true, the predicates just saw placeholders rather than the values they
+    #: originally decided on, so `changed` says little — treat the whole result
+    #: as unreliable. See `tollgate.redaction`.
+    redacted: bool = False
 
 
 def replay(
@@ -203,6 +212,16 @@ def replay(
 
     Without `policies`, only the reconstructed context and the event itself are
     returned (`new_results=None`, `changed=False`).
+
+    Two things the reconstructed context cannot restore, both of which make a
+    replayed decision diverge from the original rather than merely differ:
+    the scope's `checksum_provider`/`consent_provider` (so
+    `state_checksum_matches()` and `patient_consent_on_file()` fail safe to
+    `False`) and any `CallState`, so history-dependent policies read zero. On
+    top of that, arguments that were redacted at record time come back as
+    placeholders — `ReplayResult.redacted` flags that case and a warning is
+    logged, because a predicate reading a redacted value is not re-deciding
+    the original call in any meaningful sense.
     """
     event = ActionLedger.current().get(event_id)
     if event is None:
@@ -220,10 +239,24 @@ def replay(
         state_checksum=event.checksum_expected,
     )
     ctx = GuardContext.build(tool_name=event.tool, args=event.args, scope=scope)
+    redacted = contains_placeholder(event.args)
 
     if policies is None:
         return ReplayResult(
-            event=event, context=ctx, original_decision=event.decision, new_results=None, changed=False
+            event=event,
+            context=ctx,
+            original_decision=event.decision,
+            new_results=None,
+            changed=False,
+            redacted=redacted,
+        )
+
+    if redacted:
+        logger.warning(
+            "event %s was recorded with redacted arguments — replaying it evaluates "
+            "policies against placeholders, so the result is not comparable to the "
+            "original decision",
+            event_id,
         )
 
     results: list[RuleResult] = []
@@ -238,4 +271,5 @@ def replay(
         original_decision=event.decision,
         new_results=tuple(results),
         changed=new_decision != event.decision,
+        redacted=redacted,
     )
