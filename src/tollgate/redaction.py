@@ -35,6 +35,7 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from typing import Any, Protocol, runtime_checkable
 
 #: What a redacted value is replaced with. Deliberately not empty and not the
@@ -134,10 +135,15 @@ class Redactor(Protocol):
 class NullRedactor:
     """Records everything verbatim. Installed by `configure_redaction(enabled=False)`."""
 
+    def __repr__(self) -> str:
+        return "<NullRedactor>"
+
     def redact_args(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Return `args` unchanged, as a shallow copy."""
         return dict(args)
 
     def redact_text(self, text: str) -> str:
+        """Return `text` unchanged."""
         return text
 
 
@@ -152,8 +158,14 @@ class PatternRedactor:
       deeply nested, with only the matching span replaced so the surrounding
       text stays readable.
 
-    Nested dicts, lists and tuples are walked, because a credential in a JSON
-    payload is the common case, not an edge one.
+    Nested containers are walked — dicts, lists, tuples, sets and frozensets —
+    because a credential in a JSON payload is the common case, not an edge
+    one. Dict *keys* are scrubbed alongside values: a mapping keyed by token is
+    unusual but real, and a leaked key leaks just as effectively as a value.
+    `bytes` values are checked too, and replaced wholesale when they match.
+
+    Generators and other one-shot iterables are left untouched: consuming one
+    to scrub it would destroy the value being recorded.
     """
 
     def __init__(
@@ -169,6 +181,13 @@ class PatternRedactor:
         self.keys = frozenset(k.lower() for k in keys)
         self.placeholder = placeholder
         self.redact_credit_cards = redact_credit_cards
+
+    def __repr__(self) -> str:
+        labels = ",".join(label for label, _ in self.patterns)
+        return (
+            f"<PatternRedactor patterns={len(self.patterns)}[{labels}] "
+            f"keys={len(self.keys)} credit_cards={self.redact_credit_cards}>"
+        )
 
     def redact_text(self, text: str) -> str:
         for label, pattern in self.patterns:
@@ -186,14 +205,37 @@ class PatternRedactor:
     def _is_sensitive_key(self, key: object) -> bool:
         return isinstance(key, str) and key.lower() in self.keys
 
+    def _redact_bytes(self, value: bytes | bytearray) -> Any:
+        """Replace a byte string wholesale when it contains a secret.
+
+        Text has only its matching span replaced, which keeps the surroundings
+        readable. Bytes have no guaranteed encoding, so locating the span by
+        decoding and then re-encoding could corrupt everything around it —
+        replacing the whole value is the conservative choice.
+        """
+        decoded = value.decode("utf-8", errors="replace")
+        return value if self.redact_text(decoded) == decoded else self.placeholder.encode()
+
+    def _redact_key(self, key: Any) -> Any:
+        return self.redact_text(key) if isinstance(key, str) else key
+
     def _redact_value(self, value: Any) -> Any:
         if isinstance(value, str):
             return self.redact_text(value)
+        if isinstance(value, bytes | bytearray):
+            return self._redact_bytes(value)
         if isinstance(value, Mapping):
             return {
-                key: self.placeholder if self._is_sensitive_key(key) else self._redact_value(item)
+                self._redact_key(key): (
+                    self.placeholder if self._is_sensitive_key(key) else self._redact_value(item)
+                )
                 for key, item in value.items()
             }
+        if isinstance(value, AbstractSet):
+            # Redacting a hashable yields a hashable, so the result is still a
+            # legal set member.
+            redacted_items = {self._redact_value(item) for item in value}
+            return frozenset(redacted_items) if isinstance(value, frozenset) else redacted_items
         # `str`/`bytes` are Sequences too, and already handled above.
         if isinstance(value, Sequence) and not isinstance(value, str | bytes):
             redacted = [self._redact_value(item) for item in value]
@@ -201,6 +243,7 @@ class PatternRedactor:
         return value
 
     def redact_args(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Return a scrubbed copy of a tool's arguments. Never mutates `args`."""
         return {
             key: self.placeholder if self._is_sensitive_key(key) else self._redact_value(value)
             for key, value in args.items()
@@ -220,7 +263,7 @@ def configure_redaction(
     enabled: bool = True,
     keys: Iterable[str] | None = None,
     include_pii: bool = False,
-    redact_credit_cards: bool = False,
+    redact_credit_cards: bool | None = None,
     extra_patterns: Iterable[PatternSpec] = (),
     placeholder: str = DEFAULT_PLACEHOLDER,
     redactor: Redactor | None = None,
@@ -237,6 +280,11 @@ def configure_redaction(
     `extra_patterns` always adds to whatever pattern set is in effect.
     `redactor` overrides everything with your own implementation, for wiring
     up an existing DLP service.
+
+    `redact_credit_cards` defaults to following `include_pii`, since a card
+    number is PII; pass it explicitly to decouple the two. It used to be
+    `redact_credit_cards or include_pii`, which meant an explicit `False`
+    alongside `include_pii=True` was silently ignored.
     """
     global _redactor
     if redactor is None:
@@ -251,7 +299,7 @@ def configure_redaction(
                 patterns=patterns,
                 keys=DEFAULT_SENSITIVE_KEYS if keys is None else keys,
                 placeholder=placeholder,
-                redact_credit_cards=redact_credit_cards or include_pii,
+                redact_credit_cards=(include_pii if redact_credit_cards is None else redact_credit_cards),
             )
     with _lock:
         _redactor = redactor
@@ -259,9 +307,15 @@ def configure_redaction(
 
 
 def current_redactor() -> Redactor:
-    """The redactor every record-time call site consults."""
-    with _lock:
-        return _redactor
+    """The redactor every record-time call site consults.
+
+    Read without taking `_lock`: rebinding a module global is atomic, so a
+    caller sees either the old redactor or the new one, never a torn value.
+    Locking here would put a mutex acquisition on the path of every single
+    recorded event to protect one pointer read. Writers still lock, so two
+    concurrent `configure_redaction()` calls can't interleave.
+    """
+    return _redactor
 
 
 def reset_redaction() -> None:
@@ -285,12 +339,20 @@ def contains_placeholder(value: Any, placeholder: str = DEFAULT_PLACEHOLDER) -> 
     """Whether anything in `value` was redacted.
 
     Used by `replay()` to warn that a reconstructed context holds placeholders
-    rather than the values the policies originally saw.
+    rather than the values the policies originally saw. Walks the same shapes
+    `PatternRedactor` scrubs, keys included — a report that a value survived
+    redaction has to look everywhere redaction reached.
     """
+    marker = placeholder.rstrip("]")
     if isinstance(value, str):
-        return placeholder.rstrip("]") in value
+        return marker in value
+    if isinstance(value, bytes | bytearray):
+        return marker.encode() in value
     if isinstance(value, Mapping):
-        return any(contains_placeholder(item, placeholder) for item in value.values())
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return any(
+            contains_placeholder(key, placeholder) or contains_placeholder(item, placeholder)
+            for key, item in value.items()
+        )
+    if isinstance(value, AbstractSet | Sequence) and not isinstance(value, str | bytes):
         return any(contains_placeholder(item, placeholder) for item in value)
     return False
