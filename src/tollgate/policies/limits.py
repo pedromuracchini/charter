@@ -18,6 +18,7 @@ from collections.abc import Callable
 from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, Decision, Severity
+from tollgate.errors import ConfigurationError
 
 
 def rate_limit_policy(
@@ -111,7 +112,7 @@ def budget_policy(
     bites — but it is a quota, not a hard financial control.
     """
     if amount_from is None and actual_from is None:
-        raise ValueError("budget_policy requires amount_from and/or actual_from")
+        raise ConfigurationError("budget_policy requires amount_from and/or actual_from")
 
     scope_label = tool_name or "any tool"
     policy = PolicySet(

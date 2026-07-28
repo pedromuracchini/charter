@@ -17,6 +17,7 @@ from tollgate._safety import safe_call
 from tollgate.core.context import GuardContext
 from tollgate.core.policy_set import Hook, Policy
 from tollgate.decisions import BLOCK, Decision, RuleResult, Severity
+from tollgate.errors import ConfigurationError
 
 logger = logging.getLogger("tollgate.policy")
 
@@ -36,7 +37,7 @@ class AgentScopedPolicy(Policy):
         hook: Hook = "pre",
     ) -> None:
         if allowed_roles is None and pre is None:
-            raise ValueError("AgentScopedPolicy requires allowed_roles and/or pre")
+            raise ConfigurationError("AgentScopedPolicy requires allowed_roles and/or pre")
         self.name = name
         self.on_fail = on_fail
         self.reason = reason

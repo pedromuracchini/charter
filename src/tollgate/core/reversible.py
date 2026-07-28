@@ -19,6 +19,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from tollgate.decisions import BLOCK, ESCALATE, RuleResult
+from tollgate.errors import ConfigurationError
 
 IrreversibilityLevel = Literal["low", "medium", "high", "permanent"]
 
@@ -49,7 +50,7 @@ class ReversibleAction:
         timeout_s: int = 300,
     ) -> None:
         if irreversibility_level == "medium" and undo_fn is None:
-            raise ValueError(
+            raise ConfigurationError(
                 f"ReversibleAction {name!r}: irreversibility_level='medium' requires undo_fn"
             )
         self.do_fn = do_fn

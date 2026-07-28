@@ -23,6 +23,7 @@ from typing import Any
 from tollgate.core.context import GuardContext
 from tollgate.core.escalation import EscalationHandler
 from tollgate.decisions import RuleResult
+from tollgate.errors import ConfigurationError, EscalationError
 from tollgate.escalation._message import format_escalation_summary
 
 logger = logging.getLogger("tollgate.escalation.slack")
@@ -53,7 +54,7 @@ class SlackEscalationHandler(EscalationHandler):
         poll_interval_s: float = 2.0,
     ) -> None:
         if not approvers:
-            raise ValueError("SlackEscalationHandler requires a non-empty approvers set")
+            raise ConfigurationError("SlackEscalationHandler requires a non-empty approvers set")
         self.bot_token = bot_token
         self.channel = channel
         self.approvers = approvers
@@ -80,10 +81,10 @@ class SlackEscalationHandler(EscalationHandler):
     def _post_message(self, text: str) -> str:
         resp = self._call("chat.postMessage", "POST", {"channel": self.channel, "text": text})
         if not resp.get("ok"):
-            raise RuntimeError(f"chat.postMessage failed: {resp.get('error')}")
+            raise EscalationError(f"chat.postMessage failed: {resp.get('error')}")
         ts = resp.get("ts")
         if not ts:
-            raise RuntimeError(f"chat.postMessage response had no ts: {resp!r}")
+            raise EscalationError(f"chat.postMessage response had no ts: {resp!r}")
         return str(ts)
 
     def _check_reaction(self, ts: str) -> bool | None:
@@ -93,7 +94,7 @@ class SlackEscalationHandler(EscalationHandler):
         if not resp.get("ok"):
             if resp.get("error") == "no_reaction":
                 return None
-            raise RuntimeError(f"reactions.get failed: {resp.get('error')}")
+            raise EscalationError(f"reactions.get failed: {resp.get('error')}")
 
         reactions = resp.get("message", {}).get("reactions", [])
         approved_by: set[str] = set()

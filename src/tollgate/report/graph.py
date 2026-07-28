@@ -11,6 +11,7 @@ import json
 from collections.abc import Iterable
 from typing import Literal
 
+from tollgate.errors import ConfigurationError
 from tollgate.ledger.event import LedgerEvent
 
 GraphFormat = Literal["dot", "mermaid", "json"]
@@ -52,7 +53,7 @@ def policy_graph(events: list[LedgerEvent], format: GraphFormat = "mermaid") -> 
             lines.append(f'  "{policy}" -> "{tool}" [label="{action}"];')
         lines.append("}")
         return "\n".join(lines)
-    raise ValueError(f"unsupported graph format: {format!r}")
+    raise ConfigurationError(f"unsupported graph format: {format!r}")
 
 
 def _delegation_edges(
@@ -92,4 +93,4 @@ def delegation_graph(events: list[LedgerEvent], format: DelegationFormat = "merm
             lines.append(f'  "{a}" -> "{t}" [label="{action}"];')
         lines.append("}")
         return "\n".join(lines)
-    raise ValueError(f"unsupported graph format: {format!r}")
+    raise ConfigurationError(f"unsupported graph format: {format!r}")

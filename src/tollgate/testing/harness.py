@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from tollgate.errors import ConfigurationError
 from tollgate.ledger.event import LedgerEvent
 from tollgate.redaction import contains_placeholder
 
@@ -28,7 +29,7 @@ def fixtures_from_events(events: list[LedgerEvent], framework: Framework = "pyte
     the recorded traffic is actually covered.
     """
     if framework != "pytest":
-        raise ValueError(f"unsupported test harness framework: {framework!r}")
+        raise ConfigurationError(f"unsupported test harness framework: {framework!r}")
 
     seen: dict[str, LedgerEvent] = {}
     for event in events:

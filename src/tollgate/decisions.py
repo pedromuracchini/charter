@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
+from tollgate.errors import TollgateError
+
 
 class Decision(Enum):
     """The three possible outcomes of evaluating a rule against a `GuardContext`."""
@@ -24,6 +26,9 @@ ALLOW = Decision.ALLOW
 _PRECEDENCE: dict[Decision, int] = {BLOCK: 2, ESCALATE: 1, ALLOW: 0}
 
 Severity = Literal["high", "medium", "low"]
+
+#: Used only to break ties *within* one precedence level — see `pick_decision`.
+_SEVERITY_RANK: dict[str, int] = {"high": 2, "medium": 1, "low": 0}
 
 
 @dataclass(frozen=True)
@@ -59,22 +64,35 @@ class GuardDecision:
 def pick_decision(failing: list[RuleResult]) -> RuleResult | None:
     """Among failing rule results, pick the one to act on.
 
-    Ties are broken by decision precedence (BLOCK > ESCALATE > ALLOW) so that,
-    e.g., a BLOCK from one rule always wins over an ESCALATE from another rule
-    evaluated for the same hook.
+    Ranked first by decision precedence (BLOCK > ESCALATE > ALLOW), so a BLOCK
+    from one rule always wins over an ESCALATE from another rule evaluated for
+    the same hook. Ties *within* a precedence level are then broken by severity
+    (high > medium > low): between two simultaneous BLOCKs, the recorded
+    severity used to be whichever rule happened to be registered first, which
+    made the ledger's severity field depend on policy ordering.
     """
     if not failing:
         return None
-    return max(failing, key=lambda r: _PRECEDENCE[r.on_fail])
+    return max(failing, key=lambda r: (_PRECEDENCE[r.on_fail], _SEVERITY_RANK.get(r.severity, 0)))
 
 
-class GuardBlocked(Exception):
+class GuardBlocked(TollgateError):
     """Raised when a tool call is blocked and the interceptor is in `enforce` mode.
 
     Covers both a direct BLOCK decision and an ESCALATE that was denied or timed
     out (fail-safe: an unresolved escalation behaves like a block).
+
+    `args` holds the `GuardDecision`, not its reason string, so the exception
+    survives `pickle`/`copy` intact — agents routinely marshal exceptions across
+    process boundaries (Celery, `concurrent.futures`, multiprocessing), and a
+    round trip used to rebuild `self.decision` as a bare `str`, turning any
+    later `exc.decision.reason` into an `AttributeError`. `__str__` still
+    renders just the reason, so existing `str(exc)` output is unchanged.
     """
 
     def __init__(self, decision: GuardDecision) -> None:
         self.decision = decision
-        super().__init__(decision.reason)
+        super().__init__(decision)
+
+    def __str__(self) -> str:
+        return self.decision.reason

@@ -14,6 +14,7 @@ from tollgate import TollgateInterceptor, wrap  # noqa: E402
 from tollgate.adapters.mcp import guard_mcp_server, guard_mcp_session  # noqa: E402
 from tollgate.core.policy_set import PolicySet  # noqa: E402
 from tollgate.decisions import BLOCK, GuardBlocked  # noqa: E402
+from tollgate.errors import ConfigurationError  # noqa: E402
 from tollgate.ledger.ledger import ActionLedger  # noqa: E402
 
 
@@ -201,5 +202,5 @@ def test_guarding_a_server_with_no_tools_handler_is_an_explicit_error():
     bare = Server("no-tools")
     assert types.CallToolRequest not in bare.request_handlers
 
-    with pytest.raises(RuntimeError, match="define the server's tools"):
+    with pytest.raises(ConfigurationError, match="define the server's tools"):
         guard_mcp_server(bare, TollgateInterceptor(policies=[]))
