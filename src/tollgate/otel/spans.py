@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from tollgate.core.context import GuardContext
-from tollgate.decisions import ALLOW, GuardDecision
+from tollgate.decisions import ALLOW, BLOCK, GuardDecision
 from tollgate.otel.config import current_settings, otel_available
 
 
@@ -70,6 +70,9 @@ def evaluate_span(
 
     tracer = trace.get_tracer("tollgate", tracer_provider=provider)
     with tracer.start_as_current_span("tollgate.evaluate") as span:
+        # `tollgate.tool` is what makes these spans groupable in a backend —
+        # "which tool is getting blocked?" is the first question anyone asks.
+        span.set_attribute("tollgate.tool", ctx.tool_name)
         span.set_attribute("tollgate.policy", decision.policy_name or "")
         span.set_attribute("tollgate.policy_hash", decision.policy_hash or "")
         span.set_attribute("tollgate.action", decision.action.value)
@@ -77,10 +80,19 @@ def evaluate_span(
         span.set_attribute("tollgate.severity", decision.severity)
         span.set_attribute("tollgate.reason", decision.reason)
         span.set_attribute("tollgate.latency_ms", latency_ms)
+        span.set_attribute("tollgate.session_id", ctx.session_id)
+        span.set_attribute("tollgate.step_index", ctx.step_index)
         span.set_attribute("tollgate.caller_agent_id", ctx.caller_agent_id or "")
         span.set_attribute("tollgate.caller_role", ctx.caller_role or "")
+        span.set_attribute("tollgate.trust_level", ctx.trust_level)
         span.set_attribute("tollgate.delegation_chain", "→".join(ctx.delegation_chain))
         span.set_attribute("tollgate.dry_run", dry_run)
+
+        # A blocked call is an error from the caller's perspective, and only a
+        # span status makes it show up as one in a trace UI's error views.
+        # Not applied in dry_run/observe: nothing was actually denied there.
+        if decision.action is BLOCK and not dry_run:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, decision.reason))
 
         span_context = span.get_span_context()
         yield (

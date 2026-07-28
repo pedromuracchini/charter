@@ -476,9 +476,11 @@ Deferred or intentionally out of scope:
   deterministic fingerprint per policy, but there's no automatic "policy X
   changed from hash A to hash B" ledger entry when rules change between runs.
 - **OTEL span enrichment beyond summary attributes** — spans carry
-  policy/action/hook/severity/reason/latency/caller/dry_run (see
-  `otel/spans.py`), not a serialized predicate source, a snapshot of context
-  values at evaluation time, or the tool call's stack frame.
+  tool/policy/policy_hash/action/hook/severity/reason/latency/session/step/
+  caller/trust/delegation_chain/dry_run, plus an ERROR span status on an
+  enforced BLOCK (see `otel/spans.py`) — but not a serialized predicate
+  source, a snapshot of context values at evaluation time, or the tool call's
+  stack frame.
 - **Automatic test-input synthesis** — `testing/harness.py` generates pytest
   fixtures by harvesting real `(policy, tool, decision)` combinations already
   recorded in the ledger, not by synthesizing novel passing/failing inputs for

@@ -1,8 +1,9 @@
 """Metric emission for each Tollgate decision.
 
 Implements the per-event OTEL instruments: `decisions_total`,
-`policy_latency_ms`, `undo_total`, `delegation_depth`, and
-`cross_agent_blocks_total`. The window-aggregated gauges (`block_rate`,
+`policy_latency_ms`, `undo_total`, `delegation_depth`,
+`cross_agent_blocks_total`, `escalations_total` and
+`escalation_latency_ms`. The window-aggregated gauges (`block_rate`,
 `escalate_rate`, `coverage_ratio`) are computed on demand from the ledger by
 `tollgate.report.policy_report` instead of pushed as live OTEL gauges — sliding
 window observation is operational tooling deferred past v1 (see CLAUDE.md).
@@ -12,7 +13,7 @@ No-ops whenever OTEL isn't configured or unavailable.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from tollgate.decisions import BLOCK, GuardDecision
 from tollgate.otel.config import current_settings, otel_available
@@ -73,8 +74,45 @@ def record_decision(
         _counter("tollgate.cross_agent_blocks_total", meter).add(1, attrs)
 
 
-def record_delegation_depth(depth: int) -> None:
+#: How an escalation ended. `not_resolved` means the engine deliberately
+#: skipped the handler because the mode wasn't `enforce`.
+EscalationOutcome = Literal["approved", "denied", "not_resolved"]
+
+
+def record_escalation(
+    outcome: EscalationOutcome,
+    *,
+    policy_name: str | None,
+    tool_name: str,
+    escalate_to: str | None,
+    latency_ms: float,
+) -> None:
+    """Record `escalations_total` and `escalation_latency_ms` for one
+    escalation attempt.
+
+    An escalation is the one decision that puts a human in the request path,
+    so its rate, approve/deny split and wait time are the highest-value
+    operational signals Tollgate can emit — and there was previously no metric
+    for any of them. `denied` covers a handler that said no *and* one that
+    timed out; both are fail-safe blocks and the `reason` on the ledger event
+    distinguishes them.
+    """
     meter = _meter()
     if meter is None:
         return
-    _histogram("tollgate.delegation_depth", meter).record(depth)
+    attrs = {
+        "policy": policy_name or "",
+        "tool": tool_name,
+        "outcome": outcome,
+        "escalate_to": escalate_to or "",
+    }
+    _counter("tollgate.escalations_total", meter).add(1, attrs)
+    _histogram("tollgate.escalation_latency_ms", meter).record(latency_ms, attrs)
+
+
+def record_delegation_depth(depth: int, *, agent_id: str | None = None) -> None:
+    """Record one call's delegation depth, attributed to the calling agent."""
+    meter = _meter()
+    if meter is None:
+        return
+    _histogram("tollgate.delegation_depth", meter).record(depth, {"agent": agent_id or ""})

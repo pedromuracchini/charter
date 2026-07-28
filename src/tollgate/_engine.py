@@ -51,7 +51,8 @@ from tollgate.decisions import (
 )
 from tollgate.ledger.event import ContributingRule, LedgerEvent
 from tollgate.ledger.ledger import ActionLedger
-from tollgate.otel.metrics import record_decision
+from tollgate.multiagent.delegation import delegation_depth
+from tollgate.otel.metrics import record_decision, record_delegation_depth, record_escalation
 from tollgate.otel.spans import evaluate_span, should_sample
 
 logger = logging.getLogger("tollgate.reversible")
@@ -167,7 +168,9 @@ async def _run_with_timeout_async(
 _UNRESOLVED_SUFFIX = " (escalation not resolved — {mode} mode, would block pending approval)"
 
 
-def _unresolved_escalation(rule_result: RuleResult, mode: str) -> tuple[GuardDecision, bool]:
+def _unresolved_escalation(
+    rule_result: RuleResult, ctx: GuardContext, mode: str
+) -> tuple[GuardDecision, bool]:
     """The decision for an ESCALATE that deliberately was not sent to a handler.
 
     Outside `enforce` mode the call proceeds no matter what, so contacting the
@@ -184,7 +187,36 @@ def _unresolved_escalation(rule_result: RuleResult, mode: str) -> tuple[GuardDec
         policy_hash=rule_result.policy_hash,
         severity=rule_result.severity,
     )
+    record_escalation(
+        "not_resolved",
+        policy_name=rule_result.policy_name,
+        tool_name=ctx.tool_name,
+        escalate_to=rule_result.escalate_to,
+        latency_ms=0.0,
+    )
     return decision, True
+
+
+def _escalation_decision(
+    rule_result: RuleResult, ctx: GuardContext, approved: bool, latency_ms: float
+) -> tuple[GuardDecision, bool]:
+    """Shared bookkeeping once an escalation handler has answered."""
+    suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
+    record_escalation(
+        "approved" if approved else "denied",
+        policy_name=rule_result.policy_name,
+        tool_name=ctx.tool_name,
+        escalate_to=rule_result.escalate_to,
+        latency_ms=latency_ms,
+    )
+    decision = GuardDecision(
+        action=ESCALATE,
+        reason=rule_result.reason + suffix,
+        policy_name=rule_result.policy_name,
+        policy_hash=rule_result.policy_hash,
+        severity=rule_result.severity,
+    )
+    return decision, not approved
 
 
 def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[GuardDecision, bool]:
@@ -201,18 +233,13 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[Gua
     """
     if rule_result.on_fail is ESCALATE:
         if mode != "enforce":
-            return _unresolved_escalation(rule_result, mode)
+            return _unresolved_escalation(rule_result, ctx, mode)
         handler = resolve_handler(rule_result.escalate_to)
+        start = time.perf_counter()
         approved = _run_with_timeout(lambda: handler.escalate(ctx, rule_result), rule_result.timeout_s)
-        suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
-        decision = GuardDecision(
-            action=ESCALATE,
-            reason=rule_result.reason + suffix,
-            policy_name=rule_result.policy_name,
-            policy_hash=rule_result.policy_hash,
-            severity=rule_result.severity,
+        return _escalation_decision(
+            rule_result, ctx, approved, (time.perf_counter() - start) * 1000
         )
-        return decision, not approved
     decision = GuardDecision(
         action=rule_result.on_fail,
         reason=rule_result.reason,
@@ -228,18 +255,13 @@ async def _resolve_async(rule_result: RuleResult, ctx: GuardContext, mode: str) 
     via `_run_with_timeout_async` instead of blocking a thread pool."""
     if rule_result.on_fail is ESCALATE:
         if mode != "enforce":
-            return _unresolved_escalation(rule_result, mode)
+            return _unresolved_escalation(rule_result, ctx, mode)
         handler = resolve_handler(rule_result.escalate_to)
+        start = time.perf_counter()
         approved = await _run_with_timeout_async(handler.escalate, ctx, rule_result)
-        suffix = " (escalation approved)" if approved else " (escalation denied/timed out — fail-safe block)"
-        decision = GuardDecision(
-            action=ESCALATE,
-            reason=rule_result.reason + suffix,
-            policy_name=rule_result.policy_name,
-            policy_hash=rule_result.policy_hash,
-            severity=rule_result.severity,
+        return _escalation_decision(
+            rule_result, ctx, approved, (time.perf_counter() - start) * 1000
         )
-        return decision, not approved
     decision = GuardDecision(
         action=rule_result.on_fail,
         reason=rule_result.reason,
@@ -452,6 +474,7 @@ def evaluate_call(
     provider for this call's spans (see `TollgateInterceptor.otel_tracer`).
     """
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+    record_delegation_depth(delegation_depth(ctx), agent_id=ctx.caller_agent_id)
 
     pre_results: list[RuleResult] = []
     pre_contributors: list[tuple[str, str | None]] = []
@@ -562,6 +585,7 @@ async def evaluate_call_async(
     see the module docstring.
     """
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+    record_delegation_depth(delegation_depth(ctx), agent_id=ctx.caller_agent_id)
 
     pre_results: list[RuleResult] = []
     pre_contributors: list[tuple[str, str | None]] = []

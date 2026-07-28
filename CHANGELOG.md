@@ -121,6 +121,21 @@ initial implementation.
   Now: an empty child result makes `NotPolicy` not-applicable too (`[]`).
 
 ### Added
+- **Escalation metrics**, which did not exist at all: `tollgate.escalations_total`
+  (attributed with `outcome` — `approved` / `denied` / `not_resolved` — plus
+  policy, tool and `escalate_to`) and `tollgate.escalation_latency_ms`. An
+  escalation is the one decision that puts a human in the request path, so its
+  rate, approve/deny split and wait time are the highest-value operational
+  signals Tollgate can emit.
+- **`tollgate.delegation_depth` is now actually emitted.**
+  `record_delegation_depth()` existed and was documented but no call site ever
+  invoked it. The engine now records it per call, attributed to the calling
+  agent.
+- **Richer OTEL spans**: `tollgate.tool` (previously absent — spans could not
+  be grouped by tool in a backend), `tollgate.session_id`,
+  `tollgate.step_index`, `tollgate.trust_level`, and an ERROR span status on
+  an enforced BLOCK so denials surface in a trace UI's error views (not set in
+  `dry_run`/`observe`, where nothing was actually denied).
 - **Real `EscalationHandler` implementations** under `tollgate.escalation`:
   `SlackEscalationHandler` (posts via `chat.postMessage`, polls
   `reactions.get` for a ✅/❌ from an allowlisted approver — `approvers` is a
