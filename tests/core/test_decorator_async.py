@@ -28,7 +28,7 @@ async def test_async_tool_allowed_and_blocked():
         await asyncio.sleep(0)
         return {"transferred": amount}
 
-    assert asyncio.iscoroutinefunction(transfer)
+    assert inspect.iscoroutinefunction(transfer)
     assert await transfer(amount=100) == {"transferred": 100}
     with pytest.raises(GuardBlocked):
         await transfer(amount=1000)

@@ -222,15 +222,48 @@ def test_reversible_action_still_rejects_positional_arguments():
 
 
 def test_uninspectable_callable_stays_keyword_only():
-    """`time.time` has no introspectable signature, so `_signature_of` returns
-    None and the wrapper falls back to keyword-only rather than crashing."""
-    import time
+    """A callable `inspect.signature` cannot describe makes `_signature_of`
+    return None, and the wrapper falls back to keyword-only rather than
+    crashing.
 
-    wrapped = guard(pre=lambda ctx: True, on_fail=BLOCK, reason="never")(time.time)
+    The uninspectable callable is built here rather than borrowed from the
+    stdlib on purpose: which C builtins carry a signature changes between
+    releases (`time.time` has none up to 3.13 and one from 3.14), so a borrowed
+    one silently stops testing this branch on a newer interpreter.
+    """
 
-    assert isinstance(wrapped(), float)
+    class Uninspectable:
+        def __call__(self, **kwargs):
+            return kwargs
+
+        @property
+        def __signature__(self):
+            raise ValueError("no signature available")
+
+    wrapped = guard(pre=lambda ctx: True, on_fail=BLOCK, reason="never")(Uninspectable())
+
+    assert wrapped(x=1) == {"x": 1}
     with pytest.raises(TypeError, match="keyword arguments only"):
         wrapped(1)
+
+
+def test_a_callable_object_is_named_after_its_class():
+    """A callable instance has no `__name__`; reading it directly used to take
+    the decorator down with an AttributeError before any policy existed."""
+    seen = {}
+
+    class Transfer:
+        def __call__(self, amount):
+            return amount
+
+    wrapped = guard(
+        pre=lambda ctx: seen.update(tool=ctx.tool_name) is None,
+        on_fail=BLOCK,
+        reason="never",
+    )(Transfer())
+
+    assert wrapped(amount=5) == 5
+    assert seen == {"tool": "Transfer"}
 
 
 def test_builtin_with_a_signature_binds_positionally():

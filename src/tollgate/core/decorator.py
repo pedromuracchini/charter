@@ -49,9 +49,15 @@ R = TypeVar("R")
 
 
 def _tool_name(func: Callable[..., Any] | ReversibleAction) -> str:
+    """The name policies match on and the ledger records.
+
+    Falls back to the class name for a callable object, which has no
+    `__name__` of its own — a plain `func.__name__` raised `AttributeError`
+    and took the decorator down before any policy existed to protect it.
+    """
     if isinstance(func, ReversibleAction):
         return func.name
-    return func.__name__
+    return getattr(func, "__name__", type(func).__name__)
 
 
 def _is_async_tool(func: Callable[..., Any] | ReversibleAction) -> bool:

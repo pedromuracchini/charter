@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import warnings
 
 import pytest
@@ -66,7 +67,7 @@ def test_otel_tracer_is_honored_without_configure_otel():
     from tollgate.otel.config import otel_available, reset_otel
 
     if not otel_available():
-        return
+        pytest.skip("requires the otel extra")
 
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -125,7 +126,7 @@ def test_wrap_tool_auto_detects_async_and_returns_awaitable():
         return x * 2
 
     wrapped = interceptor.wrap_tool("t", tool)
-    assert asyncio.iscoroutinefunction(wrapped)
+    assert inspect.iscoroutinefunction(wrapped)
 
     async def run():
         return await wrapped(x=10)
