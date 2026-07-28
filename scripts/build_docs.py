@@ -34,10 +34,12 @@ REFERENCE = DOCS / "reference"
 #: having to delete something it did not create.
 MANIFEST = DOCS / ".generated-pages"
 
-#: source file -> published page
+#: source file -> published page. `CLAUDE.md` is deliberately absent: it is the
+#: in-repo instruction file for AI coding agents, and publishing it verbatim
+#: produced a public page titled "CLAUDE.md" that opened by addressing a coding
+#: agent. `docs/architecture.md` is hand-authored for human readers instead.
 PAGES = {
     "README.md": "index.md",
-    "CLAUDE.md": "architecture.md",
     "CONTRIBUTING.md": "contributing.md",
     "SECURITY.md": "security.md",
     "CHANGELOG.md": "changelog.md",
@@ -87,6 +89,9 @@ def _rewrite_link(match: re.Match[str]) -> str:
         return match.group(0)
     if target in PAGES:
         return f"]({PAGES[target]}{anchor})"
+    if target == "CLAUDE.md":
+        # Not published, but the architecture page covers the same ground.
+        return f"](architecture.md{anchor})"
     # No published page: link to the file in the repository, rather than leave
     # a relative path that resolves to nothing on the site.
     return f"]({REPO}/{target}{anchor})"

@@ -11,7 +11,124 @@ reaches `1.0.0`. Before `1.0.0`, minor versions may include breaking changes.
 Production-readiness hardening pass, following an adoption audit of the
 initial implementation.
 
+### Added
+- **A typed exception and warning hierarchy** (`tollgate.errors`). Every
+  deliberate failure now derives from `TollgateError`, so a caller can catch
+  the library's errors without also catching its own bugs. Each class keeps the
+  stdlib exception it used to raise — `ConfigurationError` is a `ValueError`,
+  `EscalationError` a `RuntimeError`, `LedgerEventNotFound` a `KeyError`,
+  `AdapterError` a `TypeError` — so existing `except` clauses still match.
+  `ConfigurationWarning` is used for configurations that are legal but almost
+  certainly a mistake, which a `logger.warning` left invisible under the
+  default logging setup.
+- **Per-interceptor `ledger=` and `redactor=`.** One process can now run
+  several interceptors with separate audit trails and scrubbing rules instead
+  of every call funnelling into the process-wide singletons.
+- **`args={...}` on `call()`/`acall()`**, for passing a tool's arguments
+  explicitly — see the corresponding fix below.
+- **`__repr__` on every public object.** `repr(policy_set)` printed
+  `<PolicySet object at 0x7f…>` for a library whose central objects exist to be
+  inspected, logged and diffed.
+- **`ActionLedger.sink_error_count`**, `tollgate.reset_ledger()`,
+  `tollgate.reset_otel()`, `tollgate.reset_redaction()`, `tollgate.ALL_TOOLS`
+  and `tollgate.policies` are now part of the public surface. `configure_ledger`
+  is a real documented function rather than a bare classmethod alias, which
+  generated no signature in API docs.
+- **A hand-authored architecture guide** (`docs/architecture.md`) and a
+  generated API reference (mkdocstrings). The published "Architecture" page was
+  previously `CLAUDE.md` verbatim — a page titled "CLAUDE.md" that opened by
+  addressing an AI coding agent.
+
 ### Fixed
+- **`GuardBlocked` did not survive `pickle` or `copy`.** It passed
+  `decision.reason` to `Exception.__init__`, and `__reduce__` replays `args` on
+  unpickling — so a round trip through Celery, `concurrent.futures` or
+  multiprocessing rebuilt `exc.decision` as a bare `str`, turning any later
+  `exc.decision.reason` into an `AttributeError`. It now stores the
+  `GuardDecision` itself; `__str__` still renders the reason, so `str(exc)` is
+  unchanged.
+- **A tool argument named `session_id` or `domain` could never reach its
+  tool.** Both are named parameters of `call()`/`acall()`, so they bound to the
+  interceptor and the call failed with a confusing "missing required argument"
+  — and `domain` is an ordinary argument name for a real tool. Arguments can
+  now be passed explicitly as `args={...}`, passing a colliding keyword warns
+  with `ConfigurationWarning`, and `tool_name`/`func` are positional-only so
+  those names are free too. All three adapters forward through `args=`, so a
+  wrapped tool is immune by construction.
+  **Breaking:** `wrap_tool`-wrapped callables now treat every keyword as a tool
+  argument; they previously consumed `session_id`/`domain` as scope.
+- **`@guard` reported a signature it could not honor.**
+  `functools.update_wrapper` sets `__wrapped__`, so `inspect.signature()`
+  returned the original signature while the wrapper accepted keyword arguments
+  only. Every framework that introspects a tool to build its JSON schema —
+  LangChain, the OpenAI Agents SDK, MCP — reads that signature and emits
+  positional calls from it, which failed at runtime with "takes 0 positional
+  arguments". Positional arguments are now bound against the real signature.
+- **A failing ledger sink turned an allowed call into a crash.** Recording runs
+  *after* the guarded tool has executed, so an `OSError` from a full disk or an
+  unwritable `sink_path` propagated out of a call the policies had explicitly
+  allowed — losing the tool's result to protect a copy of a record that was
+  also in memory. Sink failures are now logged and counted in
+  `sink_error_count`.
+- **Secrets survived redaction inside sets, bytes and dict keys.** Only
+  `str`/`Mapping`/`Sequence` were walked, so a credential in a `set`,
+  `frozenset`, `bytes` value or dict key reached the ledger, the JSONL sink and
+  the Slack escalation message verbatim — contradicting the module's stated
+  guarantee. `contains_placeholder()` walks the same shapes, so `replay()`'s
+  `redacted` flag cannot under-report.
+- **`configure_redaction(include_pii=True, redact_credit_cards=False)` ignored
+  the explicit `False`** (it was `redact_credit_cards or include_pii`). The
+  parameter now defaults to `None` and follows `include_pii` only when unset.
+- **The async escalation path leaked threads and used a deprecated API.** It
+  called `asyncio.get_event_loop()` inside a coroutine and dispatched sync
+  handlers to the *default* executor; on timeout `wait_for` cancels the future
+  but cannot stop the running thread, so an abandoned handler occupied a shared
+  worker and could hang `loop.shutdown_default_executor()` at exit. It now uses
+  `get_running_loop()` and a disposable pool, matching the sync path. Both
+  paths copy the caller's `contextvars`, so a handler reading `current_scope()`
+  sees the identity that triggered the escalation.
+- **`allow_sample_rate=0.0` could still sample.** `random()` can return exactly
+  `0.0` and the comparison was `<=`. Sampling also used the shared `random`
+  module, silently consuming the process-wide random stream; it now uses a
+  private, lock-guarded RNG.
+- **`pick_decision()` broke ties by registration order.** Between two rules that
+  both BLOCK, the severity recorded on the ledger event depended on which
+  policy happened to be registered first. Ties within a precedence level are
+  now broken by severity.
+- **A schemeless `escalate_to` silently blocked everything.**
+  `resolve_handler()` matches on the URI scheme, so `escalate_to="security-team"`
+  matched nothing and fell through to the fail-safe denier. Construction now
+  warns, and `register_handler()` rejects a "scheme" that is itself a URI.
+- **A tool named `"*"` double-counted against rate limits.** `CallState` used
+  `"*"` as the dict key for a session's total; the total now lives in its own
+  counter.
+- **A corrupt line aborted a whole JSONL ledger read.** `tollgate report
+  --ledger` now skips unparseable lines with a warning — the sink is an
+  append-only log a process can be killed partway through writing.
+- **The escalation-handler registry and the OTEL instrument cache were
+  unsynchronized**, unlike every other shared structure in the package.
+
+### Changed
+- **`TollgateInterceptor`'s constructor options past `mode` are keyword-only**,
+  so their order is no longer frozen.
+- **`@guard` preserves the wrapped function's types** via `ParamSpec` instead of
+  returning `Callable[..., Any]`. The package ships `py.typed`; a decorator
+  that erased types made downstream checking worse than not using the library.
+- **`AgentScopedPolicy.policy_hash` is memoized**, and composite policy hashes
+  cache keyed on their children's hashes. The former recomputed a SHA-256 on
+  every guarded call, which `PolicySet` already avoided.
+- **`current_redactor()` no longer takes a lock** to read one module global on
+  the path of every recorded event.
+- **The linter's `Severity` is now `LintSeverity`** (the old name still
+  resolves). `tollgate.Severity` is a different `Literal` with disjoint values,
+  and two exported types sharing a name is a trap.
+- **CI installs the library with no extras** in a dedicated job, and runs on
+  macOS and Windows and Python 3.14. Every graceful-degradation path was
+  previously unreachable in CI, and `path_within` — built on `Path.resolve()`,
+  whose semantics differ per platform — had only ever been tested on Linux.
+  Coverage is gated, lockfile drift fails the build, wheels are smoke-tested
+  and `twine check`ed, releases are SHA-pinned and attested, and CodeQL,
+  `pip-audit` and dependency review run on every change.
 - **`budget_policy` could not express an LLM token budget.** `amount_from` was
   evaluated at *both* hooks, and at the pre-hook `ctx.result` is still `None` —
   so the natural `lambda ctx: ctx.result["usage"]["output_tokens"]` raised

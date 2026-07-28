@@ -13,7 +13,11 @@ before and after it executes. The LLM never sees, interprets, or reasons its way
 around a policy: policies are plain Python, evaluated outside the model's context.
 
 Framework-agnostic — it's a middleware layer between an agent and its tools, not a
-full agent harness. See `CLAUDE.md` for architecture details and design rationale.
+full agent harness. The
+[architecture guide](https://tollgate-dev.github.io/tollgate/architecture/)
+explains the design rationale; the
+[API reference](https://tollgate-dev.github.io/tollgate/reference/) has the
+signature-level detail.
 
 ## Install
 
@@ -23,6 +27,7 @@ uv add "tollgate[otel]"                # with OpenTelemetry spans/metrics
 uv add "tollgate[langgraph]"           # to wrap LangChain/LangGraph tools
 uv add "tollgate[openai-agents]"       # to wrap OpenAI Agents SDK tools
 uv add "tollgate[mcp]"                 # to guard MCP tools/call, client or server side
+uv add "tollgate[all]"                 # every optional integration at once
 ```
 
 ## Batteries included
@@ -105,9 +110,27 @@ def transfer_funds(amount: float, to: str) -> dict:
 ```
 
 A blocked or denied-escalation call raises `tollgate.GuardBlocked` instead of
-running. Guarded functions are called with keyword arguments only — `ctx.args`
-*is* those keyword arguments, mirroring how agent frameworks pass tool-call
-arguments as a JSON object.
+running. Guarded functions keep their original signature — call them
+positionally or by keyword as usual — and `ctx.args` is always the flat
+name → value mapping, mirroring how agent frameworks pass tool-call arguments
+as a JSON object.
+
+Every error Tollgate raises on purpose derives from `tollgate.TollgateError`,
+so one `except` clause catches the library's failures without swallowing your
+own bugs:
+
+```python
+try:
+    transfer_funds(amount=1000, to="alice")
+except tollgate.GuardBlocked as exc:
+    print(exc.decision.reason, exc.decision.policy_name)
+except tollgate.TollgateError:
+    ...  # misconfiguration, escalation transport failure, ledger problem
+```
+
+Each one also subclasses the stdlib exception it replaced
+(`ConfigurationError` is a `ValueError`, `LedgerEventNotFound` a `KeyError`),
+so existing handlers keep working.
 
 With nothing registered for the `"slack"` scheme, that `ESCALATE` above
 always denies (fail-safe) — register a real handler to actually resolve it:
@@ -157,6 +180,18 @@ support = TollgateInterceptor(registry=registry, agent_id="support_agent", polic
 clinical.call("delete_patient", delete_patient, id=1)  # allowed
 support.call("delete_patient", delete_patient, id=1)   # GuardBlocked
 ```
+
+`call()` takes the tool's arguments as keywords for brevity, but `session_id`
+and `domain` are its own parameters. If your tool declares an argument by
+either name, pass the arguments explicitly instead — Tollgate warns rather than
+silently dropping one:
+
+```python
+interceptor.call("send", send, args={"domain": "example.com", "body": "hi"})
+```
+
+Tools wrapped with `interceptor.use(agent)` or `wrap_tool()` are immune: every
+keyword they receive is forwarded as a tool argument.
 
 Run the full worked example (registry, `ReversibleAction`, escalation, two
 interceptors) with:
@@ -273,7 +308,17 @@ tollgate.configure_ledger(sink_path="/var/log/tollgate/decisions.jsonl")
 ```
 
 Every event is mirrored to that file regardless of the in-memory cap, and
-`tollgate report --ledger /var/log/tollgate/decisions.jsonl` reads it back.
+`tollgate report --ledger /var/log/tollgate/decisions.jsonl` reads it back. A
+sink write that fails is logged and counted in `ActionLedger.sink_error_count`,
+never raised: recording happens after the tool has already run, so a full disk
+must not turn a call the policies allowed into an exception.
+
+For several tenants in one process, give each interceptor its own ledger
+instead of configuring the global one:
+
+```python
+interceptor = TollgateInterceptor(policies=[...], ledger=ActionLedger(sink_path=...))
+```
 
 ### Redaction
 
@@ -330,9 +375,10 @@ The CLI loads `my_agent.py` as a plain module and expects a module-level
 ## Development
 
 ```bash
-uv sync --extra otel --extra langgraph --extra openai-agents --extra mcp
+uv sync --extra all
 uv run pytest -q
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy src/tollgate
 ```
 
@@ -341,11 +387,13 @@ CI enforces it — see `CONTRIBUTING.md`.
 
 Docs are published at
 [tollgate-dev.github.io/tollgate](https://tollgate-dev.github.io/tollgate/),
-built from this repository's own markdown:
+assembled from this repository's markdown plus an API reference generated from
+the package's own docstrings:
 
 ```bash
-uv run python scripts/build_docs.py
-uv run --with mkdocs-material mkdocs serve
+uv run --group docs python scripts/build_docs.py
+uv run --group docs mkdocs serve
 ```
 
-See `CLAUDE.md` for what's implemented vs. deferred in this version.
+The [architecture guide](docs/architecture.md) covers the design rationale and
+what is deliberately out of scope.

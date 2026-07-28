@@ -32,7 +32,6 @@ htmlcov/
 site/
 /docs/.generated-pages
 /docs/index.md
-/docs/architecture.md
 /docs/contributing.md
 /docs/security.md
 /docs/changelog.md

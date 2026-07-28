@@ -26,14 +26,20 @@ The package is published as `tollgate` (`pip install tollgate`).
 This project uses **uv**, not raw pip/venv.
 
 ```bash
-uv sync --extra otel          # install the project + dev + otel deps into .venv
+uv sync --extra all            # install the project + dev + every optional integration
+uv sync                        # no extras — mirrors the CI job that exercises the
+                               # graceful-degradation paths; run this before claiming
+                               # something works without the extras installed
 uv run pytest -q               # run the full test suite (sync + async, via pytest-asyncio)
-uv run pytest --cov=tollgate --cov-report=term-missing   # with coverage
+uv run pytest --cov=tollgate --cov-report=term-missing   # with coverage (CI gates at 90%)
 uv run pytest tests/core/test_reversible.py::test_permanent_blocks -q  # single test
 uv run ruff check .            # lint (line-length=110, py311 target)
 uv run ruff check --fix .      # autofix
+uv run ruff format .           # format (checked in CI)
 uv run mypy src/tollgate       # strict type check
 uv build                       # build sdist + wheel
+uv run --group docs python scripts/build_docs.py   # assemble docs/ (markdown + API stubs)
+uv run --group docs mkdocs build --strict          # docs must build clean
 uv run python examples/clinical.py        # run the worked example
 uv run python examples/async_tool.py      # run the async worked example
 uv run python examples/real_escalation_handlers.py   # Slack/webhook/CLI escalation handlers
@@ -113,6 +119,38 @@ never silently disappear from the audit trail:
   `_record()` call and the `raise GuardBlocked(...)` that follow always still
   happen. Losing the audit trail at exactly the moment an undo failed would
   defeat the point of having one.
+- **Audit-sink failures don't fail the call either.** `ActionLedger.record()`
+  catches `OSError` from the `sink_path` write, logs it, and counts it in
+  `sink_error_count`. `_record()` runs *after* the guarded tool has already
+  executed, so propagating a full disk or an unwritable path would convert a
+  call the policies explicitly allowed into a failure — discarding the tool's
+  result to protect a copy of a record that is also in memory. A non-zero
+  `sink_error_count` means the on-disk trail has gaps the in-memory one does
+  not, and is the thing to alert on.
+
+### Errors are a hierarchy, and misconfiguration warns rather than only logging
+
+`src/tollgate/errors.py` defines everything Tollgate raises on purpose.
+`TollgateError` is the root, so one `except` catches the library's failures
+without swallowing the caller's own bugs; each subclass *also* inherits the
+stdlib exception it replaced (`ConfigurationError(TollgateError, ValueError)`,
+`EscalationError(…, RuntimeError)`, `LedgerEventNotFound(…, KeyError)`,
+`AdapterError(…, TypeError)`), so code written against the old behavior keeps
+working. That dual base is part of the contract, not an implementation detail.
+
+`GuardBlocked` lives in `decisions.py` (it needs `GuardDecision`) but derives
+from `TollgateError`. It passes the **decision** to `Exception.__init__`, not
+`decision.reason`: `__reduce__` replays `args`, so the old form rebuilt
+`exc.decision` as a `str` on unpickling and made `exc.decision.reason` an
+`AttributeError` — exactly where a guardrail library must not break, since
+agents routinely marshal exceptions across process boundaries. `__str__`
+returns the reason, so `str(exc)` is unchanged.
+
+`ConfigurationWarning` covers configurations that are legal but almost
+certainly wrong — a schemeless `escalate_to` (see below), an interceptor option
+shadowing a tool argument. These were `logger.warning` only, which is invisible
+under the default logging configuration, i.e. invisible to exactly the person
+who needs to see it.
 
 ### Async: auto-detected, not a parallel API
 
@@ -132,6 +170,42 @@ async, and it's auto-detected via `inspect.iscoroutinefunction` — there's no
 - `_engine._maybe_await(value)` (`await value` if `inspect.isawaitable(value)`,
   else return it as-is) is what lets a single `do_fn`/`undo_fn`/`escalate`
   implementation be either `def` or `async def` without a second base class.
+
+### Tool arguments and interceptor options are separate namespaces
+
+`TollgateInterceptor.call()` accepts a tool's arguments as `**kwargs`, but
+`session_id` and `domain` are parameters of `call()` itself — so a tool
+declaring an argument by either name could never receive it, and the call
+failed with a confusing "missing required argument" from the tool. `domain` is
+an ordinary argument name for a real tool, so this was not hypothetical. Three
+things fix it, and all three matter:
+- **`args={...}`** passes the tool's arguments explicitly, which is the only
+  form that can express *any* argument name.
+- **`tool_name` and `func` are positional-only** (`/` in the signature), so
+  those two names are free as well.
+- **A colliding keyword warns** (`ConfigurationWarning`, via
+  `_warn_if_shadowed`) instead of silently binding to the interceptor. The
+  check inspects the target's signature and only fires on a real collision, so
+  it costs nothing in the common case.
+
+`wrap_tool()` — and therefore every adapter — forwards through `args=`, so a
+wrapped tool is immune by construction. That is a deliberate behavior change:
+a wrapped callable used to consume `session_id`/`domain` as scope.
+
+`@guard` has the mirror-image fix. `functools.update_wrapper` sets
+`__wrapped__`, so `inspect.signature()` reported the *original* signature while
+the wrapper took keyword arguments only — and every framework that builds a
+tool schema by introspection (LangChain, the OpenAI Agents SDK, MCP) reads that
+signature and emits positional calls from it. `core/decorator._bind()` now
+binds positionals against the real signature, flattening a `**extra` parameter
+into `ctx.args` and preserving positional-only parameters by calling through
+`bound.args`/`bound.kwargs`. Defaults are deliberately **not** applied: a
+predicate checking whether an argument was supplied must keep seeing it absent.
+
+`guard()` returns an overloaded `_GuardDecorator` `Protocol` rather than
+`Callable[..., Any]`, so `ParamSpec` carries the wrapped function's own types
+through. The package ships `py.typed`; a decorator that erased types made
+downstream checking *worse* than not using the library.
 
 ### Ambient identity flows through `contextvars`, not function arguments
 
@@ -223,6 +297,21 @@ enforcement applies either way, so implementations don't need to manage their
 own timeout. `core/escalation.py` itself only has the ABC + registry + safe
 default — real implementations live in `tollgate.escalation` (see below), kept
 separate since they're additive and, unlike the default, do real I/O.
+
+`validate_escalate_to()` is called from `PolicySet.require()`,
+`AgentScopedPolicy.__init__` and a `"high"` `ReversibleAction`, and warns when
+a target has no URI scheme. `resolve_handler()` matches on
+`urlsplit(target).scheme`, so a plausible-looking `escalate_to="security-team"`
+resolves to the fail-safe denier and blocks **every** guarded call, forever,
+with only a log line at escalation time to explain it. It warns rather than
+raises because deny-by-default is a legitimate configuration and a handler may
+legitimately be registered after the policy is built. `register_handler()` does
+raise, for the inverse mistake of registering `"slack://approvals"` as a
+"scheme" — that can never match anything.
+
+The registry is lock-guarded: registration is usually a startup-only act, but
+nothing stops an app from swapping a handler while requests are in flight, and
+`resolve_handler()` runs on the hot path for every escalating rule.
 
 ### Real escalation handlers: Slack, webhook, CLI
 
@@ -319,7 +408,17 @@ Two mechanisms, catching different things:
   is replaced wholesale, because its value may be ordinary-looking text no
   pattern would match.
 - **By pattern** (`SECRET_PATTERNS`) — only the matching span is replaced, so
-  the surrounding text stays readable. Nested dicts/lists/tuples are walked.
+  the surrounding text stays readable. Nested dicts, lists, tuples, **sets and
+  frozensets** are walked, dict **keys** are scrubbed alongside values, and
+  `bytes`/`bytearray` values are checked and replaced wholesale when they
+  match (bytes have no guaranteed encoding, so locating a span by decoding and
+  re-encoding could corrupt everything around it). Only `str`/`Mapping`/
+  `Sequence` used to be walked, which meant a credential in a `set` or a dict
+  key reached all five sinks verbatim while the module docstring promised
+  otherwise. Generators are deliberately left alone: consuming one to scrub it
+  would destroy the value being recorded.
+  `contains_placeholder()` walks the same shapes, or `ReplayResult.redacted`
+  would under-report.
 
 **Secrets are on by default; PII is not.** A credential in the ledger has no
 upside and the secret patterns are anchored on literal markers, so false
@@ -594,11 +693,14 @@ authorized tool that raises is still an audit event".
 
 ## Scope: what's implemented vs. deferred
 
-Implemented: `@guard` (sync and async, auto-detected), `PolicySet`/
+Implemented: a typed error/warning hierarchy (`tollgate.errors`), `@guard`
+(sync and async, auto-detected, signature-preserving and `ParamSpec`-typed),
+`PolicySet`/
 `AndPolicy`/`OrPolicy`/`NotPolicy`, `ReversibleAction` (sync or async
 `do_fn`/`undo_fn`), `GuardContext`, `TollgateInterceptor`
-(enforce/dry_run/observe, sync `.call()` and async `.acall()`,
-per-interceptor `otel_tracer` override, bounded session-counter memory via
+(enforce/dry_run/observe, sync `.call()` and async `.acall()`, explicit
+`args={...}`, per-interceptor `otel_tracer`/`ledger`/`redactor` overrides,
+bounded session-counter memory via
 `max_sessions`), `ActionLedger` (JSON/CSV export, DOT/Mermaid/JSON policy +
 delegation graphs, natural-language narrative export, replay, bounded
 in-memory ring buffer via `max_events` with lossless `sink_path` mirroring),
@@ -621,9 +723,26 @@ escalation is actually enforced, not advisory. Real `EscalationHandler`
 implementations ship under `tollgate.escalation`: `SlackEscalationHandler`,
 `WebhookEscalationHandler`, `CLIEscalationHandler` (see "Real escalation
 handlers", below) — plus the LangGraph and OpenAI Agents SDK framework
-adapters (see "Real framework adapters", above). Packaging: `LICENSE`
-(Apache-2.0), GitHub Actions CI (lint/typecheck/test across Python
-3.11–3.13, then build), `CONTRIBUTING.md`, `SECURITY.md`.
+adapters (see "Real framework adapters", above).
+
+Packaging and project infrastructure: `LICENSE` (Apache-2.0),
+`CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and GitHub Actions
+running lint + `ruff format --check` + mypy + the test suite across Python
+3.11–3.14 on Linux, macOS and Windows, **plus a dedicated job with no extras
+installed**. That last one is load-bearing: every graceful-degradation branch
+(OTEL absent, each adapter's `ImportError` path) is unreachable in a job that
+installs the extras, and `pip install tollgate` with nothing else is the
+default way people get this library. Coverage is gated, `uv sync --locked`
+makes lockfile drift fail, wheels are installed into a clean venv and
+smoke-tested before release, releases are SHA-pinned and publish PEP 740
+attestations from the hand-written CHANGELOG section, and CodeQL, `pip-audit`
+and dependency review run on every change.
+
+Docs are published from `scripts/build_docs.py` + mkdocs: the repo's own
+markdown, a **hand-authored** `docs/architecture.md`, and a mkdocstrings API
+reference generated from the package's docstrings. `CLAUDE.md` is deliberately
+not published — it addresses a coding agent, not a reader evaluating the
+library.
 
 Deferred or intentionally out of scope:
 - **Live OTEL gauges** for `block_rate`/`escalate_rate`/`coverage_ratio` —
@@ -651,11 +770,20 @@ Deferred or intentionally out of scope:
 - **Policy hot-reload / rollback**, and **anomaly-rate alerting** (detecting a
   sudden shift in block rate) — both production-operations features, not
   built.
-- **History-based and environment-conditional policies** — e.g. "block if
-  this tool was called more than N times this session," or policies that
-  branch on `staging` vs `production` — both considered and intentionally not
-  built: the former needs cross-call state that complicates the data model,
-  the latter risks silent policy divergence between environments.
+- **Environment-conditional policies** — branching on `staging` vs
+  `production` risks silent policy divergence between environments, so it is
+  left to the caller's own `active_when`. (History-based policies *were* built;
+  see `CallState`.)
+- **A pluggable `LedgerSink` protocol** — `sink_path` writes JSONL to a local
+  file, and a Kafka/S3/database sink would need an interface the ledger does
+  not yet have. `TollgateInterceptor(ledger=...)` covers the multi-tenant case
+  that motivated most of the requests; forwarding off-box is currently a job
+  for whatever tails the JSONL.
+- **Frozen `GuardContext`** — the engine assigns `ctx.result` between the pre
+  and post hooks, and `args` shares its nested values with the caller's own
+  arguments, so a predicate *can* mutate what the tool receives. Deep-copying
+  every call's arguments to prevent it is real hot-path cost for a hazard that
+  is documented on the class instead.
 - **Dedicated adapters for CrewAI, Claude Agent SDK, AutoGen, Pydantic-AI,
   Google ADK, Strands** — not written. There used to be `NotImplementedError`
   skeletons for CrewAI/Claude SDK/LangChain; they were deleted, because a stub
