@@ -40,6 +40,7 @@ class GuardContext(BaseModel):
 
     _checksum_provider: Callable[[], str] | None = PrivateAttr(default=None)
     _consent_provider: Callable[[str], bool] | None = PrivateAttr(default=None)
+    _call_state: Any = PrivateAttr(default=None)
 
     @classmethod
     def build(
@@ -69,6 +70,7 @@ class GuardContext(BaseModel):
         )
         ctx._checksum_provider = scope.checksum_provider
         ctx._consent_provider = scope.consent_provider
+        ctx._call_state = scope.call_state
         return ctx
 
     def state_checksum_matches(self) -> bool:
@@ -104,6 +106,46 @@ class GuardContext(BaseModel):
             return self._checksum_provider()
         except Exception:
             return None
+
+    def calls_this_session(self, tool_name: str | None = None) -> int:
+        """How many calls this session has attempted, including this one.
+
+        Defaults to *this* tool; pass a name for another tool, or `"*"` for
+        every tool combined. Counts attempts, not successes — a call that was
+        blocked still counts, so retrying a denial doesn't reset a rate limit.
+
+        Returns 0 when no `CallState` is attached (a bare `@guard` outside any
+        interceptor, or a `ledger.replay()`), so a history-dependent policy
+        degrades to "no history" rather than reading stale live numbers.
+        """
+        if self._call_state is None:
+            return 0
+        count: int = self._call_state.call_count(
+            self.session_id, self.tool_name if tool_name is None else tool_name
+        )
+        return count
+
+    def spent(self, key: str) -> float:
+        """This session's running total for the named accumulator.
+
+        0.0 when no `CallState` is attached — see `calls_this_session`.
+        """
+        if self._call_state is None:
+            return 0.0
+        total: float = self._call_state.spend(self.session_id, key)
+        return total
+
+    def record_spend(self, key: str, amount: float) -> float:
+        """Add to the named accumulator, returning the new total.
+
+        Unlike the rest of `GuardContext` this mutates state, so it belongs in
+        a tool or a post-hook rule — never in a pre-hook predicate deciding
+        whether a call may proceed. See `tollgate.policies.limits.budget_policy`.
+        """
+        if self._call_state is None:
+            return 0.0
+        total: float = self._call_state.add_spend(self.session_id, key, amount)
+        return total
 
     def is_delegated_from(self, agent_id: str) -> bool:
         """Whether `agent_id` appears anywhere in this call's `delegation_chain`."""

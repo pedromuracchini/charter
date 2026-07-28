@@ -26,6 +26,7 @@ from tollgate.core.decorator import _is_async_tool
 from tollgate.core.policy_set import Policy
 from tollgate.core.reversible import ReversibleAction
 from tollgate.multiagent.registry import TollgateRegistry
+from tollgate.state import CallState
 
 Mode = Literal["enforce", "dry_run", "observe"]
 
@@ -43,6 +44,7 @@ class TollgateInterceptor:
         checksum_provider: Callable[[], str] | None = None,
         consent_provider: Callable[[str], bool] | None = None,
         max_sessions: int | None = DEFAULT_MAX_SESSIONS,
+        call_state: CallState | None = None,
     ) -> None:
         self.policies: list[Policy] = list(policies)
         self.mode: Mode = mode
@@ -56,6 +58,9 @@ class TollgateInterceptor:
         # growing forever on very-long-lived processes with huge session churn.
         self._step_counters: OrderedDict[str, int] = OrderedDict()
         self._max_sessions = max_sessions
+        # Backs rate-limit/budget policies. Private per interceptor by default;
+        # pass a shared `CallState` to enforce one quota across several agents.
+        self.call_state = call_state if call_state is not None else CallState(max_sessions)
         self._wrapped_tools: dict[str, Callable[..., Any]] = {}
         # One interceptor shared across request threads is the normal server
         # shape, and both dicts above are read-modify-written on the hot path.
@@ -110,6 +115,7 @@ class TollgateInterceptor:
             trust_level=identity.trust_level if identity else 0,
             checksum_provider=self._checksum_provider,
             consent_provider=self._consent_provider,
+            call_state=self.call_state,
         )
 
     def call(

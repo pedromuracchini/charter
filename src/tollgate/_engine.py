@@ -474,6 +474,10 @@ def evaluate_call(
     provider for this call's spans (see `TollgateInterceptor.otel_tracer`).
     """
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+    if scope.call_state is not None:
+        # Before any rule runs, so a rate-limit predicate sees the call it is
+        # deciding on. Counts attempts, not successes — see `tollgate.state`.
+        scope.call_state.record_call(ctx.session_id, ctx.tool_name)
     record_delegation_depth(delegation_depth(ctx), agent_id=ctx.caller_agent_id)
 
     pre_results: list[RuleResult] = []
@@ -585,6 +589,10 @@ async def evaluate_call_async(
     see the module docstring.
     """
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
+    if scope.call_state is not None:
+        # Before any rule runs, so a rate-limit predicate sees the call it is
+        # deciding on. Counts attempts, not successes — see `tollgate.state`.
+        scope.call_state.record_call(ctx.session_id, ctx.tool_name)
     record_delegation_depth(delegation_depth(ctx), agent_id=ctx.caller_agent_id)
 
     pre_results: list[RuleResult] = []

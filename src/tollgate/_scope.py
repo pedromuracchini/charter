@@ -14,7 +14,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tollgate.state import CallState
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,10 @@ class ExecutionScope:
     state_checksum: str | None = None
     checksum_provider: Callable[[], str] | None = None
     consent_provider: Callable[[str], bool] | None = None
+    #: Cross-call counters backing `ctx.calls_this_session()` / `ctx.spent()`.
+    #: `None` means no history is available — history-dependent policies then
+    #: see zero rather than stale numbers. See `tollgate.state`.
+    call_state: CallState | None = None
 
 
 _ROOT_SCOPE = ExecutionScope()
