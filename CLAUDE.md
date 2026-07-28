@@ -293,7 +293,60 @@ Two supported patterns:
   `AgentScopedPolicy` with `allowed_roles` set. `tollgate lint` flags this as
   an `error`-severity finding.
 
-### Real framework adapters: LangGraph and OpenAI Agents SDK
+### `tollgate.policies` — the shipped policy library
+
+`src/tollgate/policies/` holds tested, versioned implementations of the rules
+every agent re-derives: `no_secrets_in_args`, `no_destructive_sql`,
+`no_destructive_shell`, `path_within`, `domain_allowlist`,
+`rate_limit_policy`, `budget_policy`. Each is a *constructor* returning an
+ordinary `PolicySet`, so nothing in the engine, linter or reports needs to
+know they exist and they compose with `&`/`|`/`~` like hand-written policies.
+
+Design rules they all follow, and any new one should:
+- **Take `tool_names`** (or `tool_name`) and translate it into `active_when`.
+  An unscoped policy runs against every tool through the same interceptor —
+  the "common pitfall" below.
+- **Fail closed on a missing argument.** `path_within` with no `path` in
+  `ctx.args` blocks; it has verified nothing, so it must not pass.
+- **Resolve before comparing.** `path_within` calls `Path.resolve()` (handles
+  `..` *and* symlinks) and `domain_allowlist` compares the parsed
+  `urlsplit().hostname`, never a substring of the URL — a substring check
+  would let `example.com.evil.com` through an `example.com` allowlist.
+- **Anchor detection on literal markers, not entropy.** `secrets.py` matches
+  `sk-ant-`, `AKIA`, `-----BEGIN`; that keeps false positives rare enough for
+  BLOCK to be a sane default.
+
+They are seatbelts against agent mistakes and opportunistic prompt injection,
+**not** a sandbox — the SQL/shell matchers are evadable by an adversary who
+controls the input exactly, and detection is not redaction (a matched secret
+still lands in `LedgerEvent.args`).
+
+### `CallState`: cross-call history, deliberately beside the context
+
+`rate_limit_policy`/`budget_policy` need memory across calls, which the
+stateless `GuardContext` can't hold — CLAUDE.md previously listed both as
+deferred for exactly that reason. `src/tollgate/state.py:CallState` resolves
+it without compromising the data model: the counters live in a separate,
+lock-guarded, LRU-bounded object injected into `ExecutionScope` the same way
+`checksum_provider`/`consent_provider` already are, and reached through
+`ctx.calls_this_session()` / `ctx.spent()` / `ctx.record_spend()`.
+
+Two consequences worth keeping:
+- **`GuardContext` stays a value.** No history is stored on it; it holds a
+  reference to state owned by the interceptor.
+- **Replay stays deterministic.** `ledger.replay()` builds a scope with no
+  `CallState`, so a history-dependent policy reads zero rather than silently
+  consulting today's live counters. All the read helpers return `0`/`0.0` in
+  that case, which means these policies *allow* on absent history.
+
+The engine calls `record_call()` before any rule runs, so a rate-limit
+predicate sees the call it is deciding on, and counting is on **attempts** —
+a blocked call still counts, or retrying a denial would be free.
+`record_spend()` is the one mutating method on `GuardContext`;
+`budget_policy` calls it from a `hook="post"` rule, so only calls that
+actually ran are charged.
+
+### Real framework adapters: LangGraph, OpenAI Agents SDK, and MCP
 
 `adapters/langgraph.py` and `adapters/openai_agents.py` are real
 implementations (not skeletons), **registered by default** —
@@ -336,6 +389,22 @@ deliberate scoping decision.
   own `tool_input_guardrails`/`tool_output_guardrails`/`needs_approval`
   fields — Tollgate is complementary (framework-agnostic policy/ledger/audit
   across every framework), not a replacement for those.
+- **MCP** (`mcp.py`): the only adapter that guards *both* ends of a protocol,
+  because both are real deployment shapes. `guard_mcp_session` wraps
+  `ClientSession.call_tool` (you run the agent); `guard_mcp_server` replaces
+  the entry in the low-level `Server.request_handlers[CallToolRequest]` table,
+  reached through `FastMCP._mcp_server` when given a `FastMCP` (you run the
+  server). `MCPAdapter.install()` dispatches between them.
+  **The two report a denial differently, and that asymmetry is load-bearing:**
+  the client side raises `GuardBlocked` into your own calling code, while the
+  server side returns `CallToolResult(isError=True)` — an exception escaping a
+  request handler tears down the protocol connection for every *subsequent*
+  request, so a single denial would take the server down. Both wrappers mark
+  the object with `__tollgate_mcp_guarded__` so a second `use()` doesn't stack
+  a second evaluation layer (which would double-count against a rate limit).
+  Guarding a server with no `tools/call` handler registered yet raises
+  explicitly rather than silently guarding nothing — wrap *after* defining
+  tools.
 - **Common pitfall, not a library bug:** a `PolicySet` with no `active_when`
   applies to *every* tool call through the same interceptor. Wrapping several
   tools with different arg shapes through one shared `policies=[...]` list

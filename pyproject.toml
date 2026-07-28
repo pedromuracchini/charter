@@ -55,6 +55,9 @@ langgraph = [
 openai-agents = [
     "openai-agents>=0.1",
 ]
+mcp = [
+    "mcp>=1.2",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.11,<0.10.0"]

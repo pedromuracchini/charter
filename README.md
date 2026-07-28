@@ -16,7 +16,36 @@ uv add tollgate                        # or: pip install tollgate
 uv add "tollgate[otel]"                # with OpenTelemetry spans/metrics
 uv add "tollgate[langgraph]"           # to wrap LangChain/LangGraph tools
 uv add "tollgate[openai-agents]"       # to wrap OpenAI Agents SDK tools
+uv add "tollgate[mcp]"                 # to guard MCP tools/call, client or server side
 ```
+
+## Batteries included
+
+`tollgate.policies` ships the rules nearly every agent needs, so you don't
+start from a blank lambda. Each returns an ordinary `PolicySet` and composes
+with `&` / `|` / `~` like anything you'd write by hand:
+
+```python
+from tollgate import TollgateInterceptor
+from tollgate.policies import (
+    budget_policy, domain_allowlist, no_destructive_shell,
+    no_secrets_in_args, path_within, rate_limit_policy,
+)
+
+interceptor = TollgateInterceptor(policies=[
+    no_secrets_in_args(),                                   # API keys, JWTs, PEM blocks
+    no_destructive_shell(tool_names=("run_shell",)),        # rm -rf, mkfs, dd of=/dev/...
+    path_within(["/srv/workspace"], tool_names=("write_file",)),
+    domain_allowlist([".internal.corp"], tool_names=("http_get",)),
+    rate_limit_policy(50),                                  # per session
+    budget_policy(1000.0, lambda ctx: ctx.args["amount"], tool_name="transfer"),
+])
+```
+
+Scope them with `tool_names` — an unscoped policy applies to every tool through
+the same interceptor. The pattern matchers are seatbelts against agent
+mistakes, not a sandbox: an adversary in full control of the input can evade
+them.
 
 ## Quickstart
 
@@ -135,9 +164,20 @@ agent = Agent(name="finance_agent", tools=[transfer_funds, search_web])
 interceptor.use(agent)
 ```
 
-Requires the matching extra (`tollgate[langgraph]` / `tollgate[openai-agents]`).
-Run `uv run python examples/langgraph_integration.py` or
-`uv run python examples/openai_agents_integration.py`.
+MCP is auto-detected too, on either side of the protocol:
+
+```python
+# Client side — police what your agent asks any server to do. A denial raises.
+tollgate.wrap(client_session, interceptor)
+
+# Server side — the policy holds whoever connects. A denial returns
+# CallToolResult(isError=True), because raising would kill the connection.
+tollgate.wrap(fastmcp_server, interceptor)
+```
+
+Requires the matching extra (`tollgate[langgraph]` / `tollgate[openai-agents]` /
+`tollgate[mcp]`). Run `uv run python examples/langgraph_integration.py`,
+`examples/openai_agents_integration.py`, or `examples/mcp_integration.py`.
 
 ## Reversible actions
 
@@ -180,6 +220,7 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `async_tool.py` | `@guard` and `TollgateInterceptor.acall()` on `async def` tools. |
 | `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `tollgate[langgraph]`). |
 | `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `tollgate[openai-agents]`). |
+| `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `tollgate[mcp]`). |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
 ## Audit trail

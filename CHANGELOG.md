@@ -121,6 +121,34 @@ initial implementation.
   Now: an empty child result makes `NotPolicy` not-applicable too (`[]`).
 
 ### Added
+- **`tollgate.policies` — a library of ready-made policies.** Previously every
+  policy was something you wrote from a blank lambda, so each project
+  re-derived the same handful of rules. Ships `no_secrets_in_args`,
+  `no_destructive_sql`, `no_destructive_shell`, `path_within`,
+  `domain_allowlist`, `rate_limit_policy` and `budget_policy`, each returning
+  an ordinary `PolicySet` that composes with `&`/`|`/`~`. All take
+  `tool_names` for scoping and fail closed on a missing argument;
+  `path_within` resolves before comparing (so `..` and symlink escapes are
+  caught) and `domain_allowlist` matches the parsed hostname (so
+  `example.com.evil.com` can't slip past an `example.com` entry).
+- **`CallState` — cross-call counters and spend accumulators**
+  (`tollgate.state`), backing the rate-limit and budget policies that were
+  previously listed as deferred. Lives beside `GuardContext` rather than in
+  it: a lock-guarded, LRU-bounded object injected into the `ExecutionScope`
+  like the existing checksum/consent providers, read through
+  `ctx.calls_this_session()` / `ctx.spent()` / `ctx.record_spend()`. Replay
+  reconstructs a scope without one, so history-dependent policies report zero
+  instead of reading live counters. `TollgateInterceptor` gained a
+  `call_state` parameter — pass a shared instance to enforce one quota across
+  several agents.
+- **MCP adapter** (`tollgate[mcp]`), guarding `tools/call` on both sides of
+  the protocol: `guard_mcp_session` wraps a `ClientSession` (a denial raises
+  `GuardBlocked`), `guard_mcp_server` wraps a `FastMCP`/low-level `Server` (a
+  denial returns `CallToolResult(isError=True)`, since an exception escaping a
+  request handler would tear down the connection for every later request).
+  Auto-detected by `interceptor.use()`/`tollgate.wrap()`. New example
+  `examples/mcp_integration.py` and tests against real MCP objects over an
+  in-memory transport.
 - **Escalation metrics**, which did not exist at all: `tollgate.escalations_total`
   (attributed with `outcome` — `approved` / `denied` / `not_resolved` — plus
   policy, tool and `escalate_to`) and `tollgate.escalation_latency_ms`. An
