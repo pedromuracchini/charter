@@ -37,6 +37,10 @@ class RuleResult:
     severity: Severity = "medium"
     escalate_to: str | None = None
     timeout_s: int = 300
+    #: Fingerprint of the policy that produced this rule, carried through to the
+    #: ledger event and OTEL span so an audit can tell which version of a policy
+    #: made a decision. Set by the `Policy.evaluate()` that built the result.
+    policy_hash: str | None = None
 
 
 @dataclass(frozen=True)

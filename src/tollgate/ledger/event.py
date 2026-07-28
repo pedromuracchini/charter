@@ -11,6 +11,24 @@ from tollgate.decisions import Severity
 DecisionLabel = Literal["BLOCK", "ESCALATE", "ALLOW"]
 
 
+class ContributingRule(BaseModel):
+    """One rule that failed for a hook, beyond the single worst one acted on.
+
+    The engine resolves a hook to exactly one `decision` by precedence
+    (BLOCK > ESCALATE > ALLOW), but several rules may have failed at once.
+    Recording only the winner loses the rest of the picture: an audit asking
+    "what else was wrong with this call?" had no way to answer.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    policy: str
+    reason: str
+    on_fail: DecisionLabel
+    severity: Severity = "medium"
+    policy_hash: str | None = None
+
+
 class LedgerEvent(BaseModel):
     """One immutable entry in the `ActionLedger`.
 
@@ -41,5 +59,8 @@ class LedgerEvent(BaseModel):
     delegation_chain: list[str] = Field(default_factory=list)
     trust_level: int = 0
     policy_hash: str | None = None
+    #: Every rule that failed for this hook, including the one `decision`
+    #: reflects. Empty for an aggregate ALLOW (nothing failed).
+    contributing_rules: list[ContributingRule] = Field(default_factory=list)
     otel_trace_id: str | None = None
     otel_span_id: str | None = None

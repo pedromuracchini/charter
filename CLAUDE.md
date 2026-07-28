@@ -155,6 +155,20 @@ rule (shown as a `log` edge in the coverage graph): it still gets recorded to
 the ledger when it fails, but it never blocks or escalates anything, even if
 it "fires" at the same time as a BLOCK rule (which wins).
 
+### Every failing rule is recorded, not just the one acted on
+
+`pick_decision()` collapses a hook's failures to one `RuleResult` by precedence,
+and that one drives the outcome. But the ledger records *all* of them: the
+engine attaches the full failing list to `GuardDecision.rule_results`, and
+`_record()` writes it out as `LedgerEvent.contributing_rules`. Recording only
+the winner meant an audit could not ask "what else was wrong with this call?"
+— three rules failing at once looked identical to one. Every `RuleResult` also
+carries the `policy_hash` of the policy that produced it, stamped in
+`PolicySet.evaluate()`/`AgentScopedPolicy.evaluate()`, so a decision can be
+traced back to the exact policy version that made it. Because that hash is now
+read on every call, `PolicySet.policy_hash` memoizes its digest and invalidates
+the cache in `require()`.
+
 ### `Policy` is the common interface across very different rule shapes
 
 `PolicySet` (ANDed `require()` rules), `AgentScopedPolicy` (role-gated single

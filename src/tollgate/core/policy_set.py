@@ -113,6 +113,11 @@ class PolicySet(Policy):
         self.name = name
         self._active_when = active_when or (lambda ctx: True)
         self._rules: list[_Rule] = []
+        # Memoized policy_hash. Every evaluate() stamps the hash onto each
+        # RuleResult, so recomputing a SHA-256 over inspect.getsource() of every
+        # predicate on each tool call would be real hot-path cost. Invalidated
+        # by require(), the only thing that changes the inputs.
+        self._hash_cache: str | None = None
 
     def require(
         self,
@@ -127,6 +132,7 @@ class PolicySet(Policy):
     ) -> PolicySet:
         """Register a rule. Returns `self` so calls can be chained if desired."""
         self._rules.append(_Rule(predicate, on_fail, reason, escalate_to, timeout_s, severity, hook))
+        self._hash_cache = None
         return self
 
     def is_active(self, ctx: GuardContext) -> bool:
@@ -147,6 +153,7 @@ class PolicySet(Policy):
         if not self.is_active(ctx):
             return []
         results = []
+        policy_hash = self.policy_hash
         for rule in self._rules:
             if rule.hook != hook:
                 continue
@@ -162,6 +169,7 @@ class PolicySet(Policy):
                         policy_name=self.name,
                         severity="high",
                         timeout_s=rule.timeout_s,
+                        policy_hash=policy_hash,
                     )
                 )
                 continue
@@ -174,6 +182,7 @@ class PolicySet(Policy):
                     severity=rule.severity,
                     escalate_to=rule.escalate_to,
                     timeout_s=rule.timeout_s,
+                    policy_hash=policy_hash,
                 )
             )
         return results
@@ -186,6 +195,8 @@ class PolicySet(Policy):
 
     @property
     def policy_hash(self) -> str:
+        if self._hash_cache is not None:
+            return self._hash_cache
         digest = hashlib.sha256()
         digest.update(self.name.encode())
         for rule in self._rules:
@@ -193,7 +204,8 @@ class PolicySet(Policy):
             digest.update(rule.source().encode())
             digest.update(rule.reason.encode())
             digest.update(rule.on_fail.value.encode())
-        return f"sha256:{digest.hexdigest()[:16]}"
+        self._hash_cache = f"sha256:{digest.hexdigest()[:16]}"
+        return self._hash_cache
 
 
 class _CompositePolicy(Policy):

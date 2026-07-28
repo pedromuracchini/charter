@@ -82,6 +82,7 @@ class AgentScopedPolicy(Policy):
                     policy_name=self.name,
                     severity="high",
                     timeout_s=self.timeout_s,
+                    policy_hash=self.policy_hash,
                 )
             ]
         return [
@@ -93,6 +94,7 @@ class AgentScopedPolicy(Policy):
                 severity=self.severity,
                 escalate_to=self.escalate_to,
                 timeout_s=self.timeout_s,
+                policy_hash=self.policy_hash,
             )
         ]
 

@@ -50,7 +50,7 @@ from tollgate.decisions import (
     RuleResult,
     pick_decision,
 )
-from tollgate.ledger.event import LedgerEvent
+from tollgate.ledger.event import ContributingRule, LedgerEvent
 from tollgate.ledger.ledger import ActionLedger
 from tollgate.otel.config import current_settings
 from tollgate.otel.metrics import record_decision
@@ -183,6 +183,7 @@ def _unresolved_escalation(rule_result: RuleResult, mode: str) -> tuple[GuardDec
         action=ESCALATE,
         reason=rule_result.reason + _UNRESOLVED_SUFFIX.format(mode=mode),
         policy_name=rule_result.policy_name,
+        policy_hash=rule_result.policy_hash,
         severity=rule_result.severity,
     )
     return decision, True
@@ -210,6 +211,7 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[Gua
             action=ESCALATE,
             reason=rule_result.reason + suffix,
             policy_name=rule_result.policy_name,
+            policy_hash=rule_result.policy_hash,
             severity=rule_result.severity,
         )
         return decision, not approved
@@ -217,6 +219,7 @@ def _resolve(rule_result: RuleResult, ctx: GuardContext, mode: str) -> tuple[Gua
         action=rule_result.on_fail,
         reason=rule_result.reason,
         policy_name=rule_result.policy_name,
+        policy_hash=rule_result.policy_hash,
         severity=rule_result.severity,
     )
     return decision, rule_result.on_fail is BLOCK
@@ -235,6 +238,7 @@ async def _resolve_async(rule_result: RuleResult, ctx: GuardContext, mode: str) 
             action=ESCALATE,
             reason=rule_result.reason + suffix,
             policy_name=rule_result.policy_name,
+            policy_hash=rule_result.policy_hash,
             severity=rule_result.severity,
         )
         return decision, not approved
@@ -242,6 +246,7 @@ async def _resolve_async(rule_result: RuleResult, ctx: GuardContext, mode: str) 
         action=rule_result.on_fail,
         reason=rule_result.reason,
         policy_name=rule_result.policy_name,
+        policy_hash=rule_result.policy_hash,
         severity=rule_result.severity,
     )
     return decision, rule_result.on_fail is BLOCK
@@ -287,6 +292,16 @@ def _record(
             delegation_chain=list(ctx.delegation_chain),
             trust_level=ctx.trust_level,
             policy_hash=decision.policy_hash,
+            contributing_rules=[
+                ContributingRule(
+                    policy=r.policy_name,
+                    reason=r.reason,
+                    on_fail=r.on_fail.value.upper(),  # type: ignore[arg-type]
+                    severity=r.severity,
+                    policy_hash=r.policy_hash,
+                )
+                for r in decision.rule_results
+            ],
             otel_trace_id=span_ids[0] if span_ids else None,
             otel_span_id=span_ids[1] if span_ids else None,
         )
@@ -302,14 +317,31 @@ def _aggregate_policy_name(names: list[str]) -> str | None:
     return "+".join(unique)
 
 
+def _aggregate_policy_hash(contributors: list[tuple[str, str | None]]) -> str | None:
+    """The contributing policy's hash, but only when exactly one policy
+    contributed — a `+`-joined label has no single fingerprint to report."""
+    unique = {name: policy_hash for name, policy_hash in contributors}
+    if len(unique) != 1:
+        return None
+    return next(iter(unique.values()))
+
+
 def _record_allow(
-    ctx: GuardContext, *, hook: Hook, mode: str, contributors: list[str], tracer_provider: Any = None
+    ctx: GuardContext,
+    *,
+    hook: Hook,
+    mode: str,
+    contributors: list[tuple[str, str | None]],
+    tracer_provider: Any = None,
 ) -> None:
     settings = current_settings()
     if random.random() > settings.allow_sample_rate:
         return
     decision = GuardDecision(
-        action=ALLOW, reason="all applicable rules passed", policy_name=_aggregate_policy_name(contributors)
+        action=ALLOW,
+        reason="all applicable rules passed",
+        policy_name=_aggregate_policy_name([name for name, _ in contributors]),
+        policy_hash=_aggregate_policy_hash(contributors),
     )
     _record(
         ctx=ctx,
@@ -347,22 +379,24 @@ def evaluate_call(
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
 
     pre_results: list[RuleResult] = []
-    pre_contributors: list[str] = []
+    pre_contributors: list[tuple[str, str | None]] = []
     if reversible is not None:
         intrinsic = reversible.intrinsic_check()
         if intrinsic is not None:
             pre_results.append(intrinsic)
-            pre_contributors.append(intrinsic.policy_name)
+            pre_contributors.append((intrinsic.policy_name, intrinsic.policy_hash))
     for policy in policies:
         policy_results = policy.evaluate(ctx, "pre")
         if policy_results:
-            pre_contributors.append(policy.name)
+            pre_contributors.append((policy.name, policy.policy_hash))
         pre_results.extend(policy_results)
 
-    worst_pre = pick_decision([r for r in pre_results if not r.passed])
+    failed_pre = [r for r in pre_results if not r.passed]
+    worst_pre = pick_decision(failed_pre)
     if worst_pre is not None:
         start = time.perf_counter()
         decision, should_block = _resolve(worst_pre, ctx, mode)
+        decision = replace(decision, rule_results=tuple(failed_pre))
         latency_ms = (time.perf_counter() - start) * 1000
         _record(
             ctx=ctx,
@@ -385,17 +419,19 @@ def evaluate_call(
     ctx.result = result
 
     post_results: list[RuleResult] = []
-    post_contributors: list[str] = []
+    post_contributors: list[tuple[str, str | None]] = []
     for policy in policies:
         policy_results = policy.evaluate(ctx, "post")
         if policy_results:
-            post_contributors.append(policy.name)
+            post_contributors.append((policy.name, policy.policy_hash))
         post_results.extend(policy_results)
 
-    worst_post = pick_decision([r for r in post_results if not r.passed])
+    failed_post = [r for r in post_results if not r.passed]
+    worst_post = pick_decision(failed_post)
     if worst_post is not None:
         start = time.perf_counter()
         decision, should_block = _resolve(worst_post, ctx, mode)
+        decision = replace(decision, rule_results=tuple(failed_post))
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:
@@ -456,22 +492,24 @@ async def evaluate_call_async(
     ctx = GuardContext.build(tool_name=tool_name, args=args, scope=scope)
 
     pre_results: list[RuleResult] = []
-    pre_contributors: list[str] = []
+    pre_contributors: list[tuple[str, str | None]] = []
     if reversible is not None:
         intrinsic = reversible.intrinsic_check()
         if intrinsic is not None:
             pre_results.append(intrinsic)
-            pre_contributors.append(intrinsic.policy_name)
+            pre_contributors.append((intrinsic.policy_name, intrinsic.policy_hash))
     for policy in policies:
         policy_results = policy.evaluate(ctx, "pre")
         if policy_results:
-            pre_contributors.append(policy.name)
+            pre_contributors.append((policy.name, policy.policy_hash))
         pre_results.extend(policy_results)
 
-    worst_pre = pick_decision([r for r in pre_results if not r.passed])
+    failed_pre = [r for r in pre_results if not r.passed]
+    worst_pre = pick_decision(failed_pre)
     if worst_pre is not None:
         start = time.perf_counter()
         decision, should_block = await _resolve_async(worst_pre, ctx, mode)
+        decision = replace(decision, rule_results=tuple(failed_pre))
         latency_ms = (time.perf_counter() - start) * 1000
         _record(
             ctx=ctx,
@@ -494,17 +532,19 @@ async def evaluate_call_async(
     ctx.result = result
 
     post_results: list[RuleResult] = []
-    post_contributors: list[str] = []
+    post_contributors: list[tuple[str, str | None]] = []
     for policy in policies:
         policy_results = policy.evaluate(ctx, "post")
         if policy_results:
-            post_contributors.append(policy.name)
+            post_contributors.append((policy.name, policy.policy_hash))
         post_results.extend(policy_results)
 
-    worst_post = pick_decision([r for r in post_results if not r.passed])
+    failed_post = [r for r in post_results if not r.passed]
+    worst_post = pick_decision(failed_post)
     if worst_post is not None:
         start = time.perf_counter()
         decision, should_block = await _resolve_async(worst_post, ctx, mode)
+        decision = replace(decision, rule_results=tuple(failed_post))
         latency_ms = (time.perf_counter() - start) * 1000
         undo_op = None
         if should_block and mode == "enforce" and reversible is not None:

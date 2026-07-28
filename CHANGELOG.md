@@ -23,6 +23,21 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **`policy_hash` was never populated in any ledger event or span.** The field
+  existed on `LedgerEvent`, the `tollgate.policy_hash` span attribute was
+  emitted, and `PolicySet.policy_hash` was implemented and tested — but the
+  engine built every `GuardDecision` without it, so the value was permanently
+  `None`. `RuleResult` now carries `policy_hash`, stamped by
+  `PolicySet.evaluate()`/`AgentScopedPolicy.evaluate()` and propagated through
+  the engine. An aggregate ALLOW reports the hash only when exactly one policy
+  contributed. `PolicySet.policy_hash` is memoized (invalidated by `require()`)
+  since it is now read on the hot path.
+- **`GuardDecision.rule_results` was never populated, so simultaneous failures
+  vanished.** Only the single worst rule survived `pick_decision()`; if three
+  rules failed at once, the audit trail recorded one. The engine now attaches
+  every failing rule, and `LedgerEvent` gained `contributing_rules:
+  list[ContributingRule]` recording each one's policy, reason, `on_fail`,
+  severity and hash.
 - **The ledger's `sink_path` was unreachable through the public API.**
   `ActionLedger.current()` built its lazy singleton with no arguments and
   nothing could replace it, so a hand-constructed `ActionLedger(sink_path=...)`

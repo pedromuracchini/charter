@@ -5,7 +5,7 @@ import pytest
 from tollgate._engine import evaluate_call
 from tollgate._scope import current_scope
 from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import BLOCK, GuardBlocked
+from tollgate.decisions import BLOCK, ESCALATE, GuardBlocked
 from tollgate.ledger.event import LedgerEvent
 from tollgate.ledger.ledger import ActionLedger, replay
 
@@ -148,3 +148,88 @@ def test_reset_drops_configured_sink(tmp_path):
     ActionLedger.configure(sink_path=tmp_path / "x.jsonl")
     ActionLedger.reset()
     assert ActionLedger.current().sink_path is None
+
+
+def test_recorded_events_carry_the_deciding_policys_hash():
+    """`policy_hash` was wired end to end — LedgerEvent field, OTEL span
+    attribute, PolicySet property — but never actually populated."""
+    policy = PolicySet("hashed")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="nope")
+
+    with pytest.raises(GuardBlocked):
+        evaluate_call(
+            tool_name="t",
+            args={},
+            invoke=lambda: None,
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+        )
+
+    event = ActionLedger.current().events()[-1]
+    assert event.policy_hash == policy.policy_hash
+    assert event.policy_hash.startswith("sha256:")
+
+
+def test_allow_events_carry_the_hash_only_when_one_policy_contributed():
+    solo = PolicySet("solo")
+    solo.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
+    other = PolicySet("other")
+    other.require(lambda ctx: True, on_fail=BLOCK, reason="also fine")
+
+    evaluate_call(
+        tool_name="one",
+        args={},
+        invoke=lambda: None,
+        policies=[solo],
+        mode="enforce",
+        scope=current_scope(),
+    )
+    evaluate_call(
+        tool_name="two",
+        args={},
+        invoke=lambda: None,
+        policies=[solo, other],
+        mode="enforce",
+        scope=current_scope(),
+    )
+
+    by_tool = {e.tool: e for e in ActionLedger.current().events()}
+    assert by_tool["one"].policy_hash == solo.policy_hash
+    # A "+"-joined aggregate has no single fingerprint to report.
+    assert by_tool["two"].policy == "other+solo"
+    assert by_tool["two"].policy_hash is None
+
+
+def test_every_failing_rule_is_recorded_not_just_the_worst():
+    """pick_decision() keeps one rule by precedence; the others used to vanish,
+    so an audit could not ask "what else was wrong with this call?"."""
+    policy = PolicySet("multi")
+    policy.require(lambda ctx: False, on_fail=ESCALATE, reason="needs review")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="hard stop")
+
+    with pytest.raises(GuardBlocked):
+        evaluate_call(
+            tool_name="t",
+            args={},
+            invoke=lambda: None,
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+        )
+
+    event = ActionLedger.current().events()[-1]
+    assert event.decision == "BLOCK"  # BLOCK still wins by precedence
+    assert {(r.reason, r.on_fail) for r in event.contributing_rules} == {
+        ("needs review", "ESCALATE"),
+        ("hard stop", "BLOCK"),
+    }
+    assert all(r.policy_hash == policy.policy_hash for r in event.contributing_rules)
+
+
+def test_policy_hash_cache_is_invalidated_by_require():
+    policy = PolicySet("evolving")
+    policy.require(lambda ctx: True, on_fail=BLOCK, reason="first")
+    before = policy.policy_hash
+    policy.require(lambda ctx: True, on_fail=BLOCK, reason="second")
+    assert policy.policy_hash != before
