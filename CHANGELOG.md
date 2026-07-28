@@ -23,6 +23,13 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **`TollgateInterceptor` was not thread-safe.** `_build_scope()`
+  read-modify-wrote `_step_counters` (`get` → `+1` → `move_to_end` → possible
+  `popitem`) with no lock, so one interceptor shared across request threads —
+  the normal server shape — produced duplicate or skipped `step_index` values,
+  and concurrent `popitem` could raise. `_wrapped_tools` was mutated unlocked
+  too. Both are now guarded by a per-interceptor lock, held only for the dict
+  updates and never across policy evaluation or the tool call.
 - **A post-BLOCK on an action with no `undo_fn` recorded a successful undo.**
   `ReversibleAction.undo()` silently no-ops when `undo_fn is None`, but the
   engine recorded `undo_op="<name>.undo"` and `undo_executed=True` regardless —

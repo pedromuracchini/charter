@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from tollgate._scope import current_scope
 from tollgate.core.interceptor import TollgateInterceptor
 from tollgate.core.policy_set import PolicySet
 from tollgate.decisions import BLOCK, GuardBlocked
@@ -143,3 +144,64 @@ async def test_use_wraps_mixed_sync_and_async_tools():
     interceptor.use(agent)
     assert agent.tools["double"](x=10) == 20
     assert await agent.tools["async_double"](x=10) == 20
+
+
+def test_step_index_is_unique_under_concurrent_calls():
+    """One interceptor shared across request threads is the normal server
+    shape, and _build_scope() read-modify-writes _step_counters. Unlocked, two
+    threads could read the same value and emit a duplicate step_index."""
+    import sys
+    import threading
+
+    interceptor = TollgateInterceptor(policies=[])
+    seen: list[int] = []
+    seen_lock = threading.Lock()
+    n_threads, per_thread = 8, 60
+    barrier = threading.Barrier(n_threads)
+
+    def record_step():
+        return current_scope().step_index
+
+    def worker():
+        barrier.wait()
+        for _ in range(per_thread):
+            step = interceptor.call("probe", record_step, session_id="shared")
+            with seen_lock:
+                seen.append(step)
+
+    # The read-modify-write is only a handful of bytecodes wide, so at the
+    # default 5ms switch interval the GIL almost never preempts inside it and
+    # the race stays invisible. Shrinking the interval makes preemption
+    # routine — without the lock this assertion fails reliably.
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(original_interval)
+
+    assert sorted(seen) == list(range(n_threads * per_thread))
+
+
+def test_wrapped_tools_registry_is_safe_under_concurrent_wrapping():
+    import threading
+
+    interceptor = TollgateInterceptor(policies=[])
+    barrier = threading.Barrier(8)
+
+    def worker(index: int):
+        barrier.wait()
+        for i in range(20):
+            interceptor.wrap_tool(f"tool_{index}_{i}", lambda **kw: None)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(interceptor.wrapped_tools) == 8 * 20

@@ -15,6 +15,7 @@ different agents should export to different tracer providers.
 from __future__ import annotations
 
 import functools
+import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from typing import Any, Literal
@@ -56,6 +57,11 @@ class TollgateInterceptor:
         self._step_counters: OrderedDict[str, int] = OrderedDict()
         self._max_sessions = max_sessions
         self._wrapped_tools: dict[str, Callable[..., Any]] = {}
+        # One interceptor shared across request threads is the normal server
+        # shape, and both dicts above are read-modify-written on the hot path.
+        # Held only for the dict updates, never across policy evaluation or the
+        # tool call itself.
+        self._lock = threading.Lock()
 
         identity = registry.get(agent_id) if (registry is not None and agent_id is not None) else None
         if identity is not None:
@@ -63,11 +69,12 @@ class TollgateInterceptor:
 
     def _build_scope(self, *, session_id: str, domain: str | None) -> ExecutionScope:
         identity = self.registry.get(self.agent_id) if (self.registry and self.agent_id) else None
-        step = self._step_counters.get(session_id, 0)
-        self._step_counters[session_id] = step + 1
-        self._step_counters.move_to_end(session_id)
-        if self._max_sessions is not None and len(self._step_counters) > self._max_sessions:
-            self._step_counters.popitem(last=False)
+        with self._lock:
+            step = self._step_counters.get(session_id, 0)
+            self._step_counters[session_id] = step + 1
+            self._step_counters.move_to_end(session_id)
+            if self._max_sessions is not None and len(self._step_counters) > self._max_sessions:
+                self._step_counters.popitem(last=False)
         return ExecutionScope(
             session_id=session_id,
             step_index=step,
@@ -175,12 +182,14 @@ class TollgateInterceptor:
             functools.update_wrapper(wrapped, func)
         else:
             wrapped.__name__ = tool_name
-        self._wrapped_tools[tool_name] = wrapped
+        with self._lock:
+            self._wrapped_tools[tool_name] = wrapped
         return wrapped
 
     @property
     def wrapped_tools(self) -> dict[str, Callable[..., Any]]:
-        return dict(self._wrapped_tools)
+        with self._lock:
+            return dict(self._wrapped_tools)
 
     def use(self, agent: Any) -> Any:
         """One-line integration point: `agent.use(interceptor)` ends up calling
