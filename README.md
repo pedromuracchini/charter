@@ -1,5 +1,11 @@
 # Tollgate
 
+[![CI](https://github.com/tollgate-dev/tollgate/actions/workflows/ci.yml/badge.svg)](https://github.com/tollgate-dev/tollgate/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tollgate.svg)](https://pypi.org/project/tollgate/)
+[![Python](https://img.shields.io/pypi/pyversions/tollgate.svg)](https://pypi.org/project/tollgate/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-tollgate--dev.github.io-teal.svg)](https://tollgate-dev.github.io/tollgate/)
+
 Tollgate expresses AI agent authorization policies as deterministic, code-defined
 predicates evaluated by the runtime — never as natural-language instructions in a
 prompt. Every tool call passes through the tollgate (pre-hook and post-hook)
@@ -265,10 +271,22 @@ The CLI loads `my_agent.py` as a plain module and expects a module-level
 ## Development
 
 ```bash
-uv sync --extra otel
+uv sync --extra otel --extra langgraph --extra openai-agents --extra mcp
 uv run pytest -q
 uv run ruff check .
 uv run mypy src/tollgate
+```
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and
+CI enforces it — see `CONTRIBUTING.md`.
+
+Docs are published at
+[tollgate-dev.github.io/tollgate](https://tollgate-dev.github.io/tollgate/),
+built from this repository's own markdown:
+
+```bash
+uv run python scripts/build_docs.py
+uv run --with mkdocs-material mkdocs serve
 ```
 
 See `CLAUDE.md` for what's implemented vs. deferred in this version.

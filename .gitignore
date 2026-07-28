@@ -14,3 +14,8 @@ wheels/
 .ruff_cache/
 .mypy_cache/
 .coverage
+
+# Generated documentation. `docs/` is assembled from the repository's own
+# markdown by scripts/build_docs.py; `site/` is mkdocs' output.
+docs/
+site/
