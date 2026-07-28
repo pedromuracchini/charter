@@ -28,7 +28,6 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
-import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -52,9 +51,8 @@ from tollgate.decisions import (
 )
 from tollgate.ledger.event import ContributingRule, LedgerEvent
 from tollgate.ledger.ledger import ActionLedger
-from tollgate.otel.config import current_settings
 from tollgate.otel.metrics import record_decision
-from tollgate.otel.spans import evaluate_span
+from tollgate.otel.spans import evaluate_span, should_sample
 
 logger = logging.getLogger("tollgate.reversible")
 _escalation_logger = logging.getLogger("tollgate.escalation")
@@ -261,7 +259,13 @@ def _record(
     undo_op: str | None,
     latency_ms: float,
     tracer_provider: Any = None,
+    sampled: bool | None = None,
 ) -> LedgerEvent:
+    # A failure (BLOCK/ESCALATE) is always written to the ledger; only its span
+    # is sampled, rolled here. An ALLOW's caller has already rolled once for the
+    # ledger and passes that same result through, so the two never disagree.
+    if sampled is None:
+        sampled = should_sample(decision)
     with evaluate_span(
         ctx,
         decision,
@@ -269,6 +273,7 @@ def _record(
         dry_run=(mode != "enforce"),
         latency_ms=latency_ms,
         tracer_provider=tracer_provider,
+        sampled=sampled,
     ) as span_ids:
         record_decision(decision, ctx.tool_name, latency_ms, _is_cross_agent(ctx))
         event = LedgerEvent(
@@ -403,15 +408,15 @@ def _record_allow(
     contributors: list[tuple[str, str | None]],
     tracer_provider: Any = None,
 ) -> None:
-    settings = current_settings()
-    if random.random() > settings.allow_sample_rate:
-        return
     decision = GuardDecision(
         action=ALLOW,
         reason="all applicable rules passed",
         policy_name=_aggregate_policy_name([name for name, _ in contributors]),
         policy_hash=_aggregate_policy_hash(contributors),
     )
+    # One roll for both the ledger entry and the span — see `should_sample`.
+    if not should_sample(decision):
+        return
     _record(
         ctx=ctx,
         decision=decision,
@@ -420,6 +425,7 @@ def _record_allow(
         undo_op=None,
         latency_ms=0.0,
         tracer_provider=tracer_provider,
+        sampled=True,
     )
 
 

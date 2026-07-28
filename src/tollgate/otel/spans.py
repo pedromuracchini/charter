@@ -14,8 +14,26 @@ from contextlib import contextmanager
 from typing import Any
 
 from tollgate.core.context import GuardContext
-from tollgate.decisions import BLOCK, GuardDecision
+from tollgate.decisions import ALLOW, GuardDecision
 from tollgate.otel.config import current_settings, otel_available
+
+
+def should_sample(decision: GuardDecision) -> bool:
+    """Roll this decision against the configured sample rate, once.
+
+    The caller owns the result and passes it to `evaluate_span(sampled=...)`,
+    so the ledger and the span always agree. Previously `_record_allow` rolled
+    at `allow_sample_rate` and `evaluate_span` rolled again at the same rate,
+    making the effective span rate `allow_sample_rate²`.
+
+    Anything that isn't an ALLOW — a BLOCK *or* an ESCALATE — is a failure and
+    samples at `block_sample_rate`. ESCALATE used to fall through to
+    `allow_sample_rate`, so dialing allows down silently thinned the
+    approval-request spans too.
+    """
+    settings = current_settings()
+    rate = settings.allow_sample_rate if decision.action is ALLOW else settings.block_sample_rate
+    return random.random() <= rate
 
 
 @contextmanager
@@ -26,13 +44,17 @@ def evaluate_span(
     dry_run: bool,
     latency_ms: float,
     tracer_provider: Any = None,
+    sampled: bool = True,
 ) -> Iterator[tuple[str, str] | None]:
     """Emit a `tollgate.evaluate` span for one rule evaluation.
 
     `tracer_provider`, if given (typically `TollgateInterceptor.otel_tracer`),
     takes precedence over the tracer provider set globally via
     `configure_otel()` — letting one interceptor use its own tracer without
-    affecting others. Sample rates always come from the global settings.
+    affecting others.
+
+    `sampled` is the caller's already-made sampling decision (see
+    `should_sample`); this function never rolls its own.
 
     Yields `(trace_id_hex, span_id_hex)` if a span was actually started (so the
     ledger event can be correlated to it), or `None` if OTEL is unavailable, no
@@ -40,12 +62,7 @@ def evaluate_span(
     """
     settings = current_settings()
     provider = tracer_provider or settings.tracer_provider
-    if not (otel_available() and provider is not None):
-        yield None
-        return
-
-    sample_rate = settings.block_sample_rate if decision.action is BLOCK else settings.allow_sample_rate
-    if random.random() > sample_rate:
+    if not (otel_available() and provider is not None and sampled):
         yield None
         return
 

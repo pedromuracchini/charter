@@ -397,15 +397,27 @@ migrated. Singleton creation and replacement are both guarded by
 
 ### Sampling
 
-A failing rule (BLOCK, ESCALATE, or a log-only ALLOW) is always recorded to
-the ledger and (if OTEL is configured) always spanned at
-`block_sample_rate`/treated as a block for sampling purposes. When every
-applicable rule for a hook passes, a single aggregate ALLOW ledger entry is
-recorded, sampled at `OtelSettings.allow_sample_rate` (default 1.0). The
-aggregate entry's `policy` field is the contributing policy's name if exactly
-one policy produced rules for that hook, a `+`-joined label if several did, or
-`None` if none did (in which case nothing is recorded at all — see
-`_engine.py:_record_allow`).
+**Sampling is rolled exactly once per event**, by `otel.spans.should_sample()`,
+and the result is passed into `evaluate_span(sampled=...)` — that function
+never rolls its own. Before this, `_record_allow` rolled for the ledger and
+`evaluate_span` rolled again at the same rate, making the effective span rate
+`allow_sample_rate²` and leaving the ledger and the traces disagreeing about
+which events survived.
+
+A failing rule (BLOCK, ESCALATE, or a log-only ALLOW) is always recorded to the
+ledger; only its span is sampled, at `block_sample_rate`. "Failing" means
+anything that isn't an ALLOW — an ESCALATE samples as a block, not as an allow.
+When every applicable rule for a hook passes, a single aggregate ALLOW ledger
+entry is recorded, sampled at `OtelSettings.allow_sample_rate` (default 1.0),
+and that one roll governs both the ledger entry and its span. The aggregate
+entry's `policy` field is the contributing policy's name if exactly one policy
+produced rules for that hook, a `+`-joined label if several did, or `None` if
+none did (in which case nothing is recorded at all — see
+`_engine.py:_record_allow`); `policy_hash` is only reported in the
+single-policy case, since a `+`-joined label has no one fingerprint.
+
+A tool that raises is recorded unconditionally and never sampled — see "An
+authorized tool that raises is still an audit event".
 
 ## Scope: what's implemented vs. deferred
 

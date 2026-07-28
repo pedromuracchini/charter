@@ -23,6 +23,15 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **ALLOW events were sampled twice, and ESCALATE spans used the wrong rate.**
+  `_record_allow()` rolled against `allow_sample_rate` for the ledger, then
+  `evaluate_span()` rolled again at the same rate — the effective span rate was
+  `allow_sample_rate²`, and the ledger and the traces disagreed about which
+  events survived. Separately, `evaluate_span` sampled anything that wasn't a
+  BLOCK at `allow_sample_rate`, so dialing allows down silently thinned
+  ESCALATE spans too. Sampling is now a single roll via the new
+  `otel.spans.should_sample()`, passed into `evaluate_span(sampled=...)`, and
+  every non-ALLOW decision samples at `block_sample_rate`.
 - **`TollgateInterceptor` was not thread-safe.** `_build_scope()`
   read-modify-wrote `_step_counters` (`get` → `+1` → `move_to_end` → possible
   `popitem`) with no lock, so one interceptor shared across request threads —
