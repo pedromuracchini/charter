@@ -12,6 +12,16 @@ Production-readiness hardening pass, following an adoption audit of the
 initial implementation.
 
 ### Fixed
+- **`budget_policy` could not express an LLM token budget.** `amount_from` was
+  evaluated at *both* hooks, and at the pre-hook `ctx.result` is still `None` —
+  so the natural `lambda ctx: ctx.result["usage"]["output_tokens"]` raised
+  `TypeError`, fail-closed, and blocked every call. Added `actual_from`, read
+  only in the post hook. With `actual_from` alone the pre-hook check becomes
+  "is the budget already exhausted?", so the cap is *stop once spent* rather
+  than *never exceed* — inherent to not knowing a price before paying it.
+  Passing both bounds the overshoot: the estimate gates the call, the actual
+  figure supersedes it when charging. `budget_policy()` with neither argument
+  now raises `ValueError` instead of silently doing nothing.
 - **`dry_run`/`observe` fired real escalation side effects.** `_engine.py`
   called `_resolve()` — which contacts the escalation handler — *before*
   testing `mode == "enforce"`, so a supposedly no-op rollout would post to
@@ -125,6 +135,16 @@ initial implementation.
   Now: an empty child result makes `NotPolicy` not-applicable too (`[]`).
 
 ### Added
+- **Token and cost policies for LLM tool calls** (`tollgate.policies.cost`):
+  `token_budget_policy` (dollars per session), `token_limit_policy` (raw
+  tokens), plus the `token_cost` / `token_count` / `extract_usage` building
+  blocks. `extract_usage` reads the Anthropic (`input_tokens`), OpenAI
+  (`prompt_tokens`) and Google (`promptTokenCount`) shapes, from mappings or
+  SDK objects, and treats a missing usage block as zero rather than failing
+  closed. Prices are parameters quoted per million tokens — no pricing table
+  ships, because a stale constant in a security library would silently
+  mis-bill.
+
 - **Redaction of secrets and PII on the way into the audit trail**
   (`tollgate.redaction`). Tool arguments previously reached the in-memory
   ledger, the JSONL sink on disk, the JSON/CSV exports and the Slack

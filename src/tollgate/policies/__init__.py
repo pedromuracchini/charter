@@ -4,7 +4,8 @@ Every policy elsewhere in Tollgate is something you write: `PolicySet(...)` plus
 a lambda. That is the right primitive, but it means each new project starts
 from a blank predicate and re-derives the same handful of rules — don't leak
 credentials, don't `rm -rf`, don't escape the workspace, don't call an
-arbitrary host, don't loop forever.
+arbitrary host, don't loop forever, don't burn the month's model budget in an
+afternoon.
 
 These are those rules, as tested and versioned library code. Each returns an
 ordinary `PolicySet`, so it composes with `&`/`|`/`~` and with your own
@@ -35,6 +36,13 @@ OS-level isolation.
 
 from __future__ import annotations
 
+from tollgate.policies.cost import (
+    extract_usage,
+    token_budget_policy,
+    token_cost,
+    token_count,
+    token_limit_policy,
+)
 from tollgate.policies.destructive import no_destructive_shell, no_destructive_sql
 from tollgate.policies.limits import budget_policy, rate_limit_policy
 from tollgate.policies.network import domain_allowlist, host_allowed
@@ -44,6 +52,7 @@ from tollgate.policies.secrets import find_secrets, no_secrets_in_args
 __all__ = [
     "budget_policy",
     "domain_allowlist",
+    "extract_usage",
     "find_secrets",
     "host_allowed",
     "is_within",
@@ -52,4 +61,8 @@ __all__ = [
     "no_secrets_in_args",
     "path_within",
     "rate_limit_policy",
+    "token_budget_policy",
+    "token_cost",
+    "token_count",
+    "token_limit_policy",
 ]

@@ -35,7 +35,7 @@ with `&` / `|` / `~` like anything you'd write by hand:
 from tollgate import TollgateInterceptor
 from tollgate.policies import (
     budget_policy, domain_allowlist, no_destructive_shell,
-    no_secrets_in_args, path_within, rate_limit_policy,
+    no_secrets_in_args, path_within, rate_limit_policy, token_budget_policy,
 )
 
 interceptor = TollgateInterceptor(policies=[
@@ -43,10 +43,38 @@ interceptor = TollgateInterceptor(policies=[
     no_destructive_shell(tool_names=("run_shell",)),        # rm -rf, mkfs, dd of=/dev/...
     path_within(["/srv/workspace"], tool_names=("write_file",)),
     domain_allowlist([".internal.corp"], tool_names=("http_get",)),
-    rate_limit_policy(50),                                  # per session
+    rate_limit_policy(50),                                  # calls per session
     budget_policy(1000.0, lambda ctx: ctx.args["amount"], tool_name="transfer"),
+    token_budget_policy(5.00, input_price=3.00, output_price=15.00,
+                        tool_name="call_llm"),              # dollars per session
 ])
 ```
+
+### Rate limits, budgets and token cost
+
+Three shapes, because a limit is knowable at three different moments:
+
+| Policy | Bounds | When the cost is known |
+|---|---|---|
+| `rate_limit_policy(n)` | number of calls per session | before the call |
+| `budget_policy(max, amount_from=...)` | any figure derivable from the **arguments** | before the call — the cap is *never exceeded* |
+| `token_budget_policy(max, input_price=…, output_price=…)` | dollars spent on model calls | only from the **response** — so the cap is *stop once spent* |
+| `token_limit_policy(n)` | raw tokens per session | same as above |
+
+An LLM call cannot be priced before it is made, so the call that crosses the
+threshold completes and the *next* one is refused. That overshoot is inherent,
+not a shortcut — `budget_policy(max, amount_from=..., actual_from=...)` bounds
+it by charging an estimate up front and reconciling with the real figure
+afterwards. Prices are per **million** tokens, the way providers quote them,
+and no pricing table ships with the library: rates change, and a stale constant
+baked into a security library would silently mis-bill.
+
+`token_budget_policy` reads `usage` off the response and understands the
+Anthropic (`input_tokens`), OpenAI (`prompt_tokens`) and Google
+(`promptTokenCount`) shapes, as dicts or as SDK objects. A response with no
+usage block contributes zero rather than failing closed. `on_fail=ESCALATE` is
+often the better fit here — a human can decide whether this particular run is
+worth more money.
 
 Scope them with `tool_names` — an unscoped policy applies to every tool through
 the same interceptor. The pattern matchers are seatbelts against agent

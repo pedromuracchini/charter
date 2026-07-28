@@ -23,6 +23,7 @@ from tollgate.policies import (
     no_secrets_in_args,
     path_within,
     rate_limit_policy,
+    token_budget_policy,
 )
 
 WORKSPACE = Path(tempfile.mkdtemp(prefix="tollgate-workspace-"))
@@ -55,6 +56,11 @@ def search(query: str) -> dict:
     return {"results": [query]}
 
 
+def call_llm(prompt: str) -> dict:
+    """Shaped like a real model response — the usage block is what gets priced."""
+    return {"text": "...", "usage": {"input_tokens": 200_000, "output_tokens": 20_000}}
+
+
 def build_interceptor() -> TollgateInterceptor:
     return TollgateInterceptor(
         agent_id="ops_agent",
@@ -69,7 +75,13 @@ def build_interceptor() -> TollgateInterceptor:
             # Matches the parsed hostname, so `api.stripe.com.evil.com` fails.
             domain_allowlist(["api.stripe.com"], tool_names=("http_post",)),
             rate_limit_policy(3, tool_name="search"),
+            # Cost is in the arguments, so the cap is never exceeded.
             budget_policy(100.0, lambda ctx: ctx.args["amount"], tool_name="transfer"),
+            # Cost is only in the *response*, so the cap is "stop once spent".
+            # Prices are per million tokens, the way providers quote them.
+            token_budget_policy(
+                2.00, input_price=3.00, output_price=15.00, tool_name="call_llm"
+            ),
         ],
     )
 
@@ -135,6 +147,12 @@ def main() -> None:
     attempt(interceptor, "transfer 30 (total 90)", transfer, amount=30.0, to="bob")
     attempt(interceptor, "transfer 20 (would exceed)", transfer, amount=20.0, to="carol")
     attempt(interceptor, "transfer 10 (still fits)", transfer, amount=10.0, to="dave")
+
+    print("\n=== LLM token budget ($2, ~$0.90 per call) ===")
+    for i in range(1, 5):
+        attempt(interceptor, f"call_llm #{i}", call_llm, prompt="summarize this")
+    print("  ^ the 3rd call crossed the cap and still ran: an LLM call cannot be")
+    print("    priced before it is made, so this is 'stop once spent', not 'never exceed'.")
 
     print("\n=== a fresh session starts clean ===")
     interceptor.call("search", search, session_id="another", query="tollgate")

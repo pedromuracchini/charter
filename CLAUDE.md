@@ -345,9 +345,10 @@ generating tests that cannot pass, or dropping them and overstating coverage.
 `src/tollgate/policies/` holds tested, versioned implementations of the rules
 every agent re-derives: `no_secrets_in_args`, `no_destructive_sql`,
 `no_destructive_shell`, `path_within`, `domain_allowlist`,
-`rate_limit_policy`, `budget_policy`. Each is a *constructor* returning an
-ordinary `PolicySet`, so nothing in the engine, linter or reports needs to
-know they exist and they compose with `&`/`|`/`~` like hand-written policies.
+`rate_limit_policy`, `budget_policy`, `token_budget_policy`,
+`token_limit_policy`. Each is a *constructor* returning an ordinary
+`PolicySet`, so nothing in the engine, linter or reports needs to know they
+exist and they compose with `&`/`|`/`~` like hand-written policies.
 
 Design rules they all follow, and any new one should:
 - **Take `tool_names`** (or `tool_name`) and translate it into `active_when`.
@@ -392,6 +393,43 @@ a blocked call still counts, or retrying a denial would be free.
 `record_spend()` is the one mutating method on `GuardContext`;
 `budget_policy` calls it from a `hook="post"` rule, so only calls that
 actually ran are charged.
+
+### A budget's shape follows *when* the cost becomes knowable
+
+`budget_policy` has two forms, and picking between them is not a style choice:
+
+- **`amount_from`** — the cost is in the arguments (a transfer amount). The
+  pre-hook rejects any call that *would* breach the cap, so it is **never
+  exceeded**.
+- **`actual_from`** — the cost is only in the response (LLM token usage). The
+  pre-hook can then only ask whether the budget is *already* gone, so the
+  semantics are **stop once spent**: the call that crosses the line completes,
+  and the next is refused.
+
+That one-call overshoot is inherent to not knowing a price before paying it.
+Passing both bounds it — `amount_from` charges an estimate at the check,
+`actual_from` supersedes it with the real figure at the post hook (it replaces
+the estimate rather than adding to it). This distinction is why
+`policies/cost.py` exists at all: before it, `amount_from` ran at *both* hooks,
+so a user reading `ctx.result["usage"]` got a `TypeError` on `None` at the
+pre-hook, fail-closed to BLOCK, and every LLM call was denied.
+
+`extract_usage()` tolerates the Anthropic (`input_tokens`), OpenAI
+(`prompt_tokens`) and Google (`promptTokenCount`) field names, as mappings or
+as SDK objects, because the same response is a model coming out of an SDK and a
+dict coming back through JSON. A response with no usage block reads as zero
+rather than raising — a tool that reports nothing should contribute nothing,
+not fail-close every call routed through a budget.
+
+**No pricing table ships.** Rates change, vary by tier and region, and a stale
+constant inside a security library would silently mis-bill. Prices are
+parameters, quoted per million tokens the way providers publish them.
+
+**Concurrency caveat, stated in the docstring:** check and charge are separate
+hooks, so calls running concurrently *within one session* can each pass the
+check before any charges. Budgets are per-session and a single agent loop is
+normally sequential, so this rarely bites — but it is a quota, not a hard
+financial control.
 
 ### Real framework adapters: LangGraph, OpenAI Agents SDK, and MCP
 
