@@ -23,6 +23,15 @@ initial implementation.
   **Breaking (behavior):** a registered handler is no longer invoked in
   `dry_run`/`observe`. Code relying on that side effect must switch to
   `enforce`.
+- **The ledger's `sink_path` was unreachable through the public API.**
+  `ActionLedger.current()` built its lazy singleton with no arguments and
+  nothing could replace it, so a hand-constructed `ActionLedger(sink_path=...)`
+  was never the ledger the engine wrote to — the documented "full lossless
+  history requires `sink_path`" was not actually achievable. Added
+  `ActionLedger.configure(sink_path=..., max_events=...)`, exported as
+  `tollgate.configure_ledger`, plus a read-only `sink_path` property.
+  `current()` is now created under a lock (two threads racing on the first call
+  each built a ledger, and one set of events was silently lost).
 - **`ReversibleAction(irreversibility_level="high")` could never escalate.**
   Its intrinsic `RuleResult` was built with `escalate_to=None`, which
   `resolve_handler` maps to the fail-safe denier — so `"high"` was in practice

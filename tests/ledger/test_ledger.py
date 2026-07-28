@@ -1,7 +1,11 @@
+import threading
+
 import pytest
 
+from tollgate._engine import evaluate_call
+from tollgate._scope import current_scope
 from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import BLOCK
+from tollgate.decisions import BLOCK, GuardBlocked
 from tollgate.ledger.event import LedgerEvent
 from tollgate.ledger.ledger import ActionLedger, replay
 
@@ -93,3 +97,54 @@ def test_sink_path_captures_full_history_despite_in_memory_cap(tmp_path):
 
     lines = sink.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 5
+
+
+def test_configure_makes_sink_path_reachable_by_the_engine(tmp_path):
+    """`current()` builds its lazy default with no arguments, so a hand-built
+    ActionLedger(sink_path=...) is never the one the engine writes to."""
+    sink = tmp_path / "ledger.jsonl"
+    ActionLedger.configure(sink_path=sink)
+
+    assert ActionLedger.current().sink_path == sink
+
+    policy = PolicySet("blocks")
+    policy.require(lambda ctx: False, on_fail=BLOCK, reason="nope")
+    with pytest.raises(GuardBlocked):
+        evaluate_call(
+            tool_name="t",
+            args={"a": 1},
+            invoke=lambda: None,
+            policies=[policy],
+            mode="enforce",
+            scope=current_scope(),
+        )
+
+    lines = [line for line in sink.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert LedgerEvent.model_validate_json(lines[0]).decision == "BLOCK"
+
+
+def test_configure_survives_concurrent_current_calls():
+    """`current()` used to create the singleton without a lock — two threads
+    racing on the first call each built one, and one set of events was lost."""
+    ActionLedger._singleton = None
+    seen: list[ActionLedger] = []
+    barrier = threading.Barrier(8)
+
+    def grab():
+        barrier.wait()
+        seen.append(ActionLedger.current())
+
+    threads = [threading.Thread(target=grab) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len({id(ledger) for ledger in seen}) == 1
+
+
+def test_reset_drops_configured_sink(tmp_path):
+    ActionLedger.configure(sink_path=tmp_path / "x.jsonl")
+    ActionLedger.reset()
+    assert ActionLedger.current().sink_path is None

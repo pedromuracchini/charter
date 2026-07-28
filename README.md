@@ -182,6 +182,22 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `tollgate[openai-agents]`). |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
+## Audit trail
+
+Every decision is recorded to a process-wide `ActionLedger`. In memory it's a
+bounded ring buffer (10,000 events by default) — a memory bound, not a
+durability story. For a full lossless history, point it at a JSONL file once at
+startup, before the first guarded call:
+
+```python
+import tollgate
+
+tollgate.configure_ledger(sink_path="/var/log/tollgate/decisions.jsonl")
+```
+
+Every event is mirrored to that file regardless of the in-memory cap, and
+`tollgate report --ledger /var/log/tollgate/decisions.jsonl` reads it back.
+
 ## CLI
 
 ```bash

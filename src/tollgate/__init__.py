@@ -68,6 +68,7 @@ __all__ = [
     "TollgateRegistry",
     "WebhookEscalationHandler",
     "__version__",
+    "configure_ledger",
     "configure_otel",
     "extend_chain",
     "guard",
@@ -77,6 +78,12 @@ __all__ = [
     "session",
     "wrap",
 ]
+
+
+#: Configure the process-wide `ActionLedger` — most importantly `sink_path`,
+#: the JSONL file every event is mirrored to. Call once at startup, before the
+#: first guarded call. See `ActionLedger.configure`.
+configure_ledger = ActionLedger.configure
 
 
 def wrap(agent: Any, interceptor: TollgateInterceptor) -> Any:

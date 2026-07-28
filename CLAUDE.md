@@ -353,8 +353,20 @@ TollgateRegistry` / `TOOL_NAMES: list[str]` / `ACTIONS: list[ReversibleAction]`
 class — it's just what `cli/main.py` greps for. See `examples/clinical.py` for
 the convention in practice. `tollgate report --ledger path.jsonl` merges
 events from a JSONL ledger sink file (written via
-`ActionLedger(sink_path=...)`) with whatever's in the current process's
-in-memory ledger.
+`ActionLedger.configure(sink_path=...)`) with whatever's in the current
+process's in-memory ledger.
+
+### The process-wide ledger is configured, not constructed
+
+`ActionLedger.current()` is what `_engine._record()` writes to, and it builds
+its lazy singleton with *no arguments* — so constructing
+`ActionLedger(sink_path=...)` yourself produces an object nothing ever
+consults. `ActionLedger.configure(sink_path=..., max_events=...)` (exported as
+`tollgate.configure_ledger`) is the only supported way to set the sink for the
+ledger the engine actually uses. Call it once at startup, before the first
+guarded call; events already recorded stay with the old ledger and are not
+migrated. Singleton creation and replacement are both guarded by
+`_singleton_lock`, separate from each instance's own `_lock`.
 
 ### Sampling
 

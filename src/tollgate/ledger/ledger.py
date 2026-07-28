@@ -4,6 +4,10 @@ A process-wide instance is reachable via `ActionLedger.current()`. In-memory
 storage is a bounded ring buffer (`max_events`, default 10,000) — a memory
 bound, not a durability story: full lossless history requires `sink_path`, a
 JSONL file every event is mirrored to regardless of the in-memory cap.
+
+Configure the process-wide ledger once, before any guarded call, with
+`ActionLedger.configure(sink_path=...)` (exported as `tollgate.configure_ledger`).
+`current()` lazily builds an unconfigured default if nothing did.
 """
 
 from __future__ import annotations
@@ -40,6 +44,9 @@ class ActionLedger:
     """
 
     _singleton: ActionLedger | None = None
+    #: Guards singleton creation/replacement. Distinct from each instance's own
+    #: `_lock`, which guards that instance's events.
+    _singleton_lock: threading.Lock = threading.Lock()
 
     def __init__(
         self,
@@ -51,20 +58,55 @@ class ActionLedger:
         self._sink_path = Path(sink_path) if sink_path is not None else None
         self._dropped_count = 0
 
+    @property
+    def sink_path(self) -> Path | None:
+        """The JSONL file every event is mirrored to, if one was configured."""
+        return self._sink_path
+
     @classmethod
     def current(cls) -> ActionLedger:
-        """The process-wide `ActionLedger` singleton."""
+        """The process-wide `ActionLedger` singleton.
+
+        Lazily creates an unconfigured default. Use `configure()` before the
+        first guarded call to set `sink_path`/`max_events` instead.
+        """
         if cls._singleton is None:
-            cls._singleton = cls()
+            with cls._singleton_lock:
+                # Re-check: another thread may have created it while we waited.
+                if cls._singleton is None:
+                    cls._singleton = cls()
         return cls._singleton
+
+    @classmethod
+    def configure(
+        cls,
+        *,
+        sink_path: str | PathLike[str] | None = None,
+        max_events: int | None = DEFAULT_MAX_EVENTS,
+    ) -> ActionLedger:
+        """Install a freshly configured process-wide ledger, and return it.
+
+        This is the only supported way to enable `sink_path` for the ledger the
+        engine actually writes to: `current()` builds its lazy default with no
+        arguments, so a `ActionLedger(sink_path=...)` constructed by hand is
+        never consulted by anything.
+
+        Call once at startup, before the first guarded call — any events already
+        recorded stay with the old ledger and are **not** migrated.
+        """
+        with cls._singleton_lock:
+            cls._singleton = cls(sink_path=sink_path, max_events=max_events)
+            return cls._singleton
 
     @classmethod
     def reset(cls) -> None:
         """Replace the process-wide singleton with a fresh, empty ledger.
 
-        Intended for tests; production code should not need this.
+        Drops any `sink_path`/`max_events` set via `configure()`. Intended for
+        tests; production code should not need this.
         """
-        cls._singleton = cls()
+        with cls._singleton_lock:
+            cls._singleton = cls()
 
     @property
     def dropped_count(self) -> int:
