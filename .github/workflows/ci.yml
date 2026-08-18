@@ -150,6 +150,45 @@ jobs:
       - name: pytest
         run: uv run pytest -q
 
+  test-mcp-1x:
+    # `adapters/mcp.py` supports mcp 1.x and 2.x, detecting which registration
+    # API the installed server exposes. The lockfile can only pin one of them,
+    # so every other job exercises 2.x and the 1.x branches — `_mcp_server`,
+    # the `request_handlers[CallToolRequest]` table, the `ServerResult`
+    # envelope — are unreachable in CI. Same reasoning as `test (no extras)`:
+    # a supported path the lock does not install is a path nothing verifies.
+    name: test (mcp 1.x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install the project with the mcp extra
+        run: uv sync --locked --extra mcp
+      - name: Downgrade to the previous mcp major
+        # Deliberately outside the lock — the point is to test the version
+        # the lock does not carry. Every step after this uses `--no-sync`, or
+        # uv would restore the locked mcp 2.x and quietly turn this into a
+        # second 2.x run.
+        run: uv pip install "mcp<2"
+      - name: Assert the downgrade actually took
+        # Without this the job silently degrades into a second 2.x run the day
+        # the constraint or the resolver changes.
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata as md
+
+          version = md.version("mcp")
+          assert version.startswith("1."), f"expected mcp 1.x, got {version}"
+          from mcp.server.fastmcp import FastMCP  # 1.x-only, gone in 2.x
+
+          print(f"mcp {version} — testing the 1.x adapter branches")
+          PY
+      - name: pytest
+        run: uv run --no-sync pytest tests/adapters/test_mcp_adapter.py -q
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
@@ -168,7 +207,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, test-no-extras, docs]
+    needs: [lint, typecheck, test, test-no-extras, test-mcp-1x, docs]
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
