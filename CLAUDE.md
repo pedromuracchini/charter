@@ -576,9 +576,27 @@ deliberate scoping decision.
 - **MCP** (`mcp.py`): the only adapter that guards *both* ends of a protocol,
   because both are real deployment shapes. `guard_mcp_session` wraps
   `ClientSession.call_tool` (you run the agent); `guard_mcp_server` replaces
-  the entry in the low-level `Server.request_handlers[CallToolRequest]` table,
-  reached through `FastMCP._mcp_server` when given a `FastMCP` (you run the
+  the low-level `Server`'s registered `tools/call` handler (you run the
   server). `MCPAdapter.install()` dispatches between them.
+  **Both mcp 1.x and 2.x are supported, detected rather than configured.**
+  mcp 2.0 rewrote the server-side registration API, and this adapter reaches
+  straight into it, so `_uses_method_handlers()` picks the generation off the
+  presence of `add_request_handler` (2.x-only) and `_low_level_server()` tries
+  `_lowlevel_server` (2.x) before `_mcp_server` (1.x). What moved: `FastMCP` →
+  `MCPServer`; a table keyed by `CallToolRequest` and reached at
+  `Server.request_handlers` → one keyed by the `"tools/call"` method string
+  behind `get_request_handler`/`add_request_handler`; a handler contract of
+  `(req) -> ServerResult(CallToolResult(…))` → `(ctx, params) ->
+  CallToolResult(…)`; and the result field `isError` → `is_error` (kept only
+  as a pydantic alias, so `_blocked_call_tool_result` names the field the
+  installed version declares rather than relying on populate-by-alias). Both
+  low-level handles are private by name, but 2.x's own in-memory transport
+  reaches for `_lowlevel_server` with a `TODO: make it public` beside it. The
+  client side needed no split — `ClientSession.call_tool`'s leading parameters
+  are unchanged — but 2.x adds a `Client` facade that its docs hand you, and
+  `guard_mcp_session` accepts one, guarding the session underneath: the facade
+  delegates to `self.session.call_tool` on every call rather than binding it
+  once, so wrapping the session covers both.
   **The two report a denial differently, and that asymmetry is load-bearing:**
   the client side raises `GuardBlocked` into your own calling code, while the
   server side returns `CallToolResult(isError=True)` — an exception escaping a
