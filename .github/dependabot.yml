@@ -22,3 +22,11 @@ updates:
       dev-dependencies:
         dependency-type: "development"
         patterns: ["*"]
+    ignore:
+      # The mcp extra is capped below 2.0 on purpose: 2.x rewrites every
+      # internal `adapters/mcp.py` guards the server side through. Without
+      # this, Dependabot reopens a PR that widens the cap on every run, and
+      # the cap is the fix rather than the obstacle. Drop this entry in the
+      # same change that teaches the adapter both registration APIs.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
