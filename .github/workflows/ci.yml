@@ -196,8 +196,12 @@ jobs:
         # verify.
         run: |
           set -euo pipefail
-          tar tzf dist/*.tar.gz | grep -q '/tests/'
-          tar tzf dist/*.tar.gz | grep -q '/examples/'
+          # Read the listing once into a variable rather than piping into
+          # `grep -q`: grep exits at the first match and closes the pipe, tar
+          # takes SIGPIPE, and `pipefail` then reports 141 for a passing check.
+          listing="$(tar tzf dist/*.tar.gz)"
+          grep -q '/tests/' <<<"$listing"
+          grep -q '/examples/' <<<"$listing"
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
