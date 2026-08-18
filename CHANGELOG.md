@@ -8,8 +8,14 @@ reaches `1.0.0`. Before `1.0.0`, minor versions may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-18
+
 Production-readiness hardening pass, following an adoption audit of the
 initial implementation.
+
+This is the first release published to PyPI. `0.1.0` below records the
+initial implementation but was never uploaded, so there is no `0.1.0` on the
+index to upgrade from.
 
 ### Added
 - **A typed exception and warning hierarchy** (`charter.errors`). Every
