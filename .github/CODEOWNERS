@@ -3,15 +3,15 @@
 # indistinguishable from having no rule at all.
 
 # Default owner for everything in the repo.
-*       @tollgate-dev/maintainers
+*       @pedromuracchini
 
 # The evaluation engine is the single chokepoint every guarded call runs
 # through, and the security posture is documented policy — both warrant a
 # deliberate look rather than a routine one.
-/src/tollgate/_engine.py        @tollgate-dev/maintainers
-/src/tollgate/core/             @tollgate-dev/maintainers
-/SECURITY.md                    @tollgate-dev/maintainers
+/src/charter/_engine.py        @pedromuracchini
+/src/charter/core/             @pedromuracchini
+/SECURITY.md                    @pedromuracchini
 
 # Release and CI plumbing can publish artifacts under the project's name.
-/.github/workflows/             @tollgate-dev/maintainers
-/pyproject.toml                 @tollgate-dev/maintainers
+/.github/workflows/             @pedromuracchini
+/pyproject.toml                 @pedromuracchini

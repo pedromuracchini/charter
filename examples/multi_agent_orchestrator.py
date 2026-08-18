@@ -1,5 +1,5 @@
-"""Multi-agent orchestration: one `TollgateRegistry`, one shared set of
-policies, and one `TollgateInterceptor` per agent — the "shared tool,
+"""Multi-agent orchestration: one `CharterRegistry`, one shared set of
+policies, and one `CharterInterceptor` per agent — the "shared tool,
 identity in context" pattern from CLAUDE.md's "Multi-agent" section
 ("Pattern 2 — centralized registry", recommended when there are several
 agents). The exact same tool functions are reachable by every agent; only the
@@ -28,18 +28,18 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import (
+from charter import (
     BLOCK,
     ActionLedger,
     AgentScopedPolicy,
+    CharterInterceptor,
+    CharterRegistry,
     GuardBlocked,
-    TollgateInterceptor,
-    TollgateRegistry,
 )
 
 # 1. One central registry: identity, role, trust level, and delegation
 #    lineage for every agent in the system.
-registry = TollgateRegistry()
+registry = CharterRegistry()
 registry.register("orchestrator", role="orchestrator", trust_level=2)
 registry.register("research_agent", role="researcher", trust_level=1, delegation_chain=("orchestrator",))
 registry.register("writer_agent", role="writer", trust_level=1, delegation_chain=("orchestrator",))
@@ -103,12 +103,12 @@ def main() -> None:
     ActionLedger.reset()
 
     interceptors = {
-        agent_id: TollgateInterceptor(registry=registry, agent_id=agent_id, policies=POLICIES)
+        agent_id: CharterInterceptor(registry=registry, agent_id=agent_id, policies=POLICIES)
         for agent_id in ["orchestrator", "research_agent", "writer_agent", "executor_agent"]
     }
 
     calls = [
-        ("orchestrator", "search_web", {"query": "tollgate"}),
+        ("orchestrator", "search_web", {"query": "charter"}),
         ("research_agent", "search_web", {"query": "confused deputy prevention"}),
         ("research_agent", "write_file", {"path": "notes.txt", "content": "..."}),
         ("research_agent", "delete_file", {"path": "notes.txt"}),

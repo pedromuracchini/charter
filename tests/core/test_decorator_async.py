@@ -3,10 +3,10 @@ import inspect
 
 import pytest
 
-from tollgate.core.decorator import guard
-from tollgate.core.reversible import ReversibleAction
-from tollgate.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked
-from tollgate.ledger.ledger import ActionLedger
+from charter.core.decorator import guard
+from charter.core.reversible import ReversibleAction
+from charter.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked
+from charter.ledger.ledger import ActionLedger
 
 
 def _capturing_guard(seen):

@@ -10,9 +10,9 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import GuardBlocked, TollgateInterceptor, TollgateRegistry, max_delegation_depth_policy
+from charter import CharterInterceptor, CharterRegistry, GuardBlocked, max_delegation_depth_policy
 
-registry = TollgateRegistry()
+registry = CharterRegistry()
 registry.register("orchestrator", role="orchestrator", trust_level=2)
 registry.register("research_agent", role="researcher", trust_level=1, delegation_chain=("orchestrator",))
 registry.register(
@@ -38,9 +38,9 @@ def search_web(query: str) -> dict:
 
 def main() -> None:
     for agent_id in ["research_agent", "sub_agent", "sub_sub_agent"]:
-        interceptor = TollgateInterceptor(registry=registry, agent_id=agent_id, policies=[depth_policy])
+        interceptor = CharterInterceptor(registry=registry, agent_id=agent_id, policies=[depth_policy])
         try:
-            result = interceptor.call("search_web", search_web, query="tollgate")
+            result = interceptor.call("search_web", search_web, query="charter")
             print(f"{agent_id}: allowed -> {result}")
         except GuardBlocked as exc:
             print(f"{agent_id}: blocked -> {exc.decision.reason}")

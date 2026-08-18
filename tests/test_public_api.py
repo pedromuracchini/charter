@@ -5,9 +5,9 @@ import inspect
 
 import pytest
 
-import tollgate
+import charter
 
-#: A frozen snapshot of everything `import tollgate` promises. Adding a name
+#: A frozen snapshot of everything `import charter` promises. Adding a name
 #: here is a deliberate act; a name disappearing from it is a breaking change
 #: for someone. Asserting only that `__all__` was *sorted* let both happen
 #: silently, which is the wrong guarantee for a package heading to 1.0.
@@ -28,6 +28,10 @@ PUBLIC_API = [
     "AndPolicy",
     "CLIEscalationHandler",
     "CallState",
+    "CharterError",
+    "CharterInterceptor",
+    "CharterRegistry",
+    "CharterWarning",
     "ConfigurationError",
     "ConfigurationWarning",
     "ContributingRule",
@@ -60,10 +64,6 @@ PUBLIC_API = [
     "RuleResult",
     "Severity",
     "SlackEscalationHandler",
-    "TollgateError",
-    "TollgateInterceptor",
-    "TollgateRegistry",
-    "TollgateWarning",
     "WebhookEscalationHandler",
     "__version__",
     "build_report",
@@ -134,24 +134,24 @@ PINNED_SIGNATURES = {
     "pick_decision": "failing",
 }
 
-#: Every sub-package that re-exports something. `from tollgate.ledger import
+#: Every sub-package that re-exports something. `from charter.ledger import
 #: ActionLedger` used to fail outright: these files were all 0 bytes.
 SUBPACKAGES = [
-    "tollgate.core",
-    "tollgate.ledger",
-    "tollgate.escalation",
-    "tollgate.report",
-    "tollgate.linter",
-    "tollgate.testing",
-    "tollgate.multiagent",
-    "tollgate.otel",
-    "tollgate.cli",
-    "tollgate.policies",
+    "charter.core",
+    "charter.ledger",
+    "charter.escalation",
+    "charter.report",
+    "charter.linter",
+    "charter.testing",
+    "charter.multiagent",
+    "charter.otel",
+    "charter.cli",
+    "charter.policies",
 ]
 
 
 def test_every_name_in_all_actually_exists():
-    missing = [name for name in tollgate.__all__ if not hasattr(tollgate, name)]
+    missing = [name for name in charter.__all__ if not hasattr(charter, name)]
     assert missing == []
 
 
@@ -161,18 +161,18 @@ def test_public_api_matches_the_snapshot():
     Update `PUBLIC_API` in the same commit that changes the surface — the diff
     on this list is the reviewable record of an API change.
     """
-    assert list(tollgate.__all__) == PUBLIC_API
+    assert list(charter.__all__) == PUBLIC_API
 
 
 @pytest.mark.parametrize("name", sorted(PINNED_SIGNATURES))
 def test_entry_point_signatures_are_stable(name):
-    assert signature_shape(getattr(tollgate, name)) == PINNED_SIGNATURES[name]
+    assert signature_shape(getattr(charter, name)) == PINNED_SIGNATURES[name]
 
 
 def test_interceptor_call_keeps_tool_name_and_func_positional_only():
     """They are positional-only so a tool argument may be named `tool_name` or
     `func` without colliding — a regression here silently breaks such tools."""
-    parameters = inspect.signature(tollgate.TollgateInterceptor.call).parameters
+    parameters = inspect.signature(charter.CharterInterceptor.call).parameters
     for name in ("tool_name", "func"):
         assert parameters[name].kind is inspect.Parameter.POSITIONAL_ONLY
 
@@ -205,12 +205,12 @@ def test_subpackages_re_export_their_names(module_name):
     ],
 )
 def test_previously_unexported_names_are_reachable(name):
-    assert hasattr(tollgate, name)
+    assert hasattr(charter, name)
 
 
-def test_importing_tollgate_does_not_pull_in_a_framework_sdk():
+def test_importing_charter_does_not_pull_in_a_framework_sdk():
     """Adapters import their framework lazily, inside `applies_to()`, so
-    `import tollgate` stays cheap and works with none of the extras installed.
+    `import charter` stays cheap and works with none of the extras installed.
 
     `opentelemetry` is deliberately excluded: `otel/config.py` probes it at
     import time (guarded by try/except) to set `OTEL_AVAILABLE`. It is a light
@@ -220,7 +220,7 @@ def test_importing_tollgate_does_not_pull_in_a_framework_sdk():
     import sys
 
     code = (
-        "import sys, tollgate\n"
+        "import sys, charter\n"
         "eager = [m for m in ('langchain_core', 'langgraph', 'agents', 'mcp') if m in sys.modules]\n"
         "assert not eager, f'imported eagerly: {eager}'\n"
     )
@@ -229,5 +229,5 @@ def test_importing_tollgate_does_not_pull_in_a_framework_sdk():
 
 
 def test_version_is_exposed():
-    assert isinstance(tollgate.__version__, str)
-    assert tollgate.__version__
+    assert isinstance(charter.__version__, str)
+    assert charter.__version__

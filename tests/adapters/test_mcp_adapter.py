@@ -10,12 +10,12 @@ import mcp.types as types
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from tollgate import TollgateInterceptor, wrap
-from tollgate.adapters.mcp import guard_mcp_server, guard_mcp_session
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import BLOCK, GuardBlocked
-from tollgate.errors import ConfigurationError
-from tollgate.ledger.ledger import ActionLedger
+from charter import CharterInterceptor, wrap
+from charter.adapters.mcp import guard_mcp_server, guard_mcp_session
+from charter.core.policy_set import PolicySet
+from charter.decisions import BLOCK, GuardBlocked
+from charter.errors import ConfigurationError
+from charter.ledger.ledger import ActionLedger
 
 
 def _server() -> FastMCP:
@@ -42,7 +42,7 @@ def _blocks_deletes() -> PolicySet:
 
 
 async def test_client_side_block_raises_and_never_reaches_the_server():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
@@ -63,7 +63,7 @@ async def test_client_side_records_the_tool_arguments_for_policies():
         on_fail=BLOCK,
         reason="capture",
     )
-    interceptor = TollgateInterceptor(policies=[policy])
+    interceptor = CharterInterceptor(policies=[policy])
     server = _server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
@@ -74,7 +74,7 @@ async def test_client_side_records_the_tool_arguments_for_policies():
 
 
 async def test_client_side_writes_a_ledger_event():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
@@ -93,7 +93,7 @@ async def test_wrapping_a_session_twice_does_not_double_evaluate():
     calls = []
     policy = PolicySet("count")
     policy.require(lambda ctx: calls.append(ctx.tool_name) is None, on_fail=BLOCK, reason="count")
-    interceptor = TollgateInterceptor(policies=[policy])
+    interceptor = CharterInterceptor(policies=[policy])
     server = _server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
@@ -105,7 +105,7 @@ async def test_wrapping_a_session_twice_does_not_double_evaluate():
 
 
 async def test_use_auto_detects_a_client_session():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
@@ -120,7 +120,7 @@ async def test_use_auto_detects_a_client_session():
 async def test_server_side_block_returns_an_error_result_not_an_exception():
     """An exception escaping a request handler would tear down the connection
     for every subsequent request — MCP's own error shape is the right answer."""
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -133,7 +133,7 @@ async def test_server_side_block_returns_an_error_result_not_an_exception():
 
 
 async def test_server_side_allows_a_permitted_tool_through_unchanged():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -146,7 +146,7 @@ async def test_server_side_allows_a_permitted_tool_through_unchanged():
 
 async def test_server_side_survives_a_block_and_keeps_serving():
     """The whole reason not to raise: the next request must still work."""
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -159,7 +159,7 @@ async def test_server_side_survives_a_block_and_keeps_serving():
 
 
 async def test_server_side_records_a_ledger_event():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -172,7 +172,7 @@ async def test_server_side_records_a_ledger_event():
 
 
 async def test_use_auto_detects_a_fastmcp_server():
-    interceptor = TollgateInterceptor(policies=[_blocks_deletes()])
+    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
     server = _server()
     assert wrap(server, interceptor) is server
 
@@ -185,7 +185,7 @@ async def test_wrapping_a_server_twice_does_not_double_evaluate():
     calls = []
     policy = PolicySet("count")
     policy.require(lambda ctx: calls.append(ctx.tool_name) is None, on_fail=BLOCK, reason="count")
-    interceptor = TollgateInterceptor(policies=[policy])
+    interceptor = CharterInterceptor(policies=[policy])
     server = _server()
     guard_mcp_server(server, interceptor)
     guard_mcp_server(server, interceptor)
@@ -203,4 +203,4 @@ def test_guarding_a_server_with_no_tools_handler_is_an_explicit_error():
     assert types.CallToolRequest not in bare.request_handlers
 
     with pytest.raises(ConfigurationError, match="define the server's tools"):
-        guard_mcp_server(bare, TollgateInterceptor(policies=[]))
+        guard_mcp_server(bare, CharterInterceptor(policies=[]))

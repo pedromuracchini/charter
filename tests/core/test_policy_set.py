@@ -1,9 +1,9 @@
 import pytest
 
-from tollgate._scope import ExecutionScope
-from tollgate.core.context import GuardContext
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import ALLOW, BLOCK, ESCALATE
+from charter._scope import ExecutionScope
+from charter.core.context import GuardContext
+from charter.core.policy_set import PolicySet
+from charter.decisions import ALLOW, BLOCK, ESCALATE
 
 
 def _ctx():

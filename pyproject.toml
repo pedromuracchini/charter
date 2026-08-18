@@ -1,5 +1,5 @@
 [project]
-name = "tollgate"
+name = "charter"
 version = "0.1.0"
 description = "Deterministic, code-defined guardrails for AI agent tool calls"
 readme = "README.md"
@@ -39,13 +39,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tollgate-dev/tollgate"
-Repository = "https://github.com/tollgate-dev/tollgate"
-Issues = "https://github.com/tollgate-dev/tollgate/issues"
-Changelog = "https://github.com/tollgate-dev/tollgate/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/pedromuracchini/charter"
+Repository = "https://github.com/pedromuracchini/charter"
+Issues = "https://github.com/pedromuracchini/charter/issues"
+Changelog = "https://github.com/pedromuracchini/charter/blob/main/CHANGELOG.md"
 
 [project.scripts]
-tollgate = "tollgate.cli.main:main"
+charter = "charter.cli.main:main"
 
 [project.optional-dependencies]
 otel = [
@@ -62,11 +62,11 @@ openai-agents = [
 mcp = [
     "mcp>=1.2",
 ]
-# Everything at once, for `pip install tollgate[all]`. Kept as a recursive
+# Everything at once, for `pip install charter[all]`. Kept as a recursive
 # reference rather than a duplicated dependency list so it cannot drift out of
 # sync with the individual extras above.
 all = [
-    "tollgate[otel,langgraph,openai-agents,mcp]",
+    "charter[otel,langgraph,openai-agents,mcp]",
 ]
 
 [build-system]
@@ -113,7 +113,7 @@ docstring-code-format = false
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["tollgate"]
+packages = ["charter"]
 strict = true
 mypy_path = "src"
 
@@ -130,7 +130,7 @@ addopts = "--strict-markers --strict-config"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["tollgate"]
+source = ["charter"]
 branch = true
 
 [tool.coverage.report]

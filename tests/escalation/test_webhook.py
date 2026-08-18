@@ -5,15 +5,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tollgate._scope import ExecutionScope
-from tollgate.core.context import GuardContext
-from tollgate.core.escalation import register_handler
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
-from tollgate.escalation.webhook import WebhookEscalationHandler
+from charter._scope import ExecutionScope
+from charter.core.context import GuardContext
+from charter.core.escalation import register_handler
+from charter.core.policy_set import PolicySet
+from charter.decisions import ESCALATE, GuardBlocked, RuleResult
+from charter.escalation.webhook import WebhookEscalationHandler
 
 _URL = "https://example.invalid/approve"
-_URLOPEN = "tollgate.escalation.webhook.urllib.request.urlopen"
+_URLOPEN = "charter.escalation.webhook.urllib.request.urlopen"
 
 
 def _ctx(**args):
@@ -150,8 +150,8 @@ def test_end_to_end_through_evaluate_call(local_approval_server):
         timeout_s=5,
     )
 
-    from tollgate._engine import evaluate_call
-    from tollgate._scope import current_scope
+    from charter._engine import evaluate_call
+    from charter._scope import current_scope
 
     result = evaluate_call(
         tool_name="transfer_funds",

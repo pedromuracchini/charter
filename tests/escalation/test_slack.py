@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tollgate._scope import ExecutionScope
-from tollgate.core.context import GuardContext
-from tollgate.core.escalation import register_handler
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
-from tollgate.escalation.slack import SlackEscalationHandler
+from charter._scope import ExecutionScope
+from charter.core.context import GuardContext
+from charter.core.escalation import register_handler
+from charter.core.policy_set import PolicySet
+from charter.decisions import ESCALATE, GuardBlocked, RuleResult
+from charter.escalation.slack import SlackEscalationHandler
 
 
 def _ctx():
@@ -62,7 +62,7 @@ def test_approved_by_allowlisted_approver():
         _response({"ok": True, "message": {"reactions": [{"name": "white_check_mark", "users": ["U_OK"]}]}}),
     ]
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
+        "charter.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
     ):
         assert handler.escalate(_ctx(), _rule_result()) is True
 
@@ -76,7 +76,7 @@ def test_denied_by_deny_reaction():
         _response({"ok": True, "message": {"reactions": [{"name": "x", "users": ["U_OK"]}]}}),
     ]
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
+        "charter.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
     ):
         assert handler.escalate(_ctx(), _rule_result()) is False
 
@@ -90,7 +90,7 @@ def test_reaction_from_non_approver_does_not_count():
         {"ok": True, "message": {"reactions": [{"name": "white_check_mark", "users": ["U_STRANGER"]}]}}
     )
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen",
+        "charter.escalation.slack.urllib.request.urlopen",
         side_effect=_first_then_repeat(post, stranger_reacted),
     ):
         assert handler.escalate(_ctx(), _rule_result(timeout_s=5)) is False
@@ -105,7 +105,7 @@ def test_timeout_with_no_reaction_denies_promptly():
 
     start = time.perf_counter()
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=_first_then_repeat(post, no_reaction)
+        "charter.escalation.slack.urllib.request.urlopen", side_effect=_first_then_repeat(post, no_reaction)
     ):
         result = handler.escalate(_ctx(), _rule_result(timeout_s=5))
     elapsed = time.perf_counter() - start
@@ -123,7 +123,7 @@ def test_rule_result_timeout_can_be_shorter_than_handler_timeout():
 
     start = time.perf_counter()
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=_first_then_repeat(post, no_reaction)
+        "charter.escalation.slack.urllib.request.urlopen", side_effect=_first_then_repeat(post, no_reaction)
     ):
         result = handler.escalate(_ctx(), _rule_result(timeout_s=0.2))
     elapsed = time.perf_counter() - start
@@ -134,7 +134,7 @@ def test_rule_result_timeout_can_be_shorter_than_handler_timeout():
 
 def test_network_error_denies():
     handler = SlackEscalationHandler(bot_token="xoxb-test", channel="C1", approvers={"U_OK"})
-    with patch("tollgate.escalation.slack.urllib.request.urlopen", side_effect=OSError("boom")):
+    with patch("charter.escalation.slack.urllib.request.urlopen", side_effect=OSError("boom")):
         assert handler.escalate(_ctx(), _rule_result()) is False
 
 
@@ -149,15 +149,15 @@ def test_end_to_end_through_evaluate_call():
         lambda ctx: False, on_fail=ESCALATE, reason="always escalates", escalate_to="slack://C1", timeout_s=5
     )
 
-    from tollgate._engine import evaluate_call
-    from tollgate._scope import current_scope
+    from charter._engine import evaluate_call
+    from charter._scope import current_scope
 
     responses = [
         _response({"ok": True, "ts": "1.1"}),
         _response({"ok": True, "message": {"reactions": [{"name": "white_check_mark", "users": ["U_OK"]}]}}),
     ]
     with patch(
-        "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
+        "charter.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
     ):
         result = evaluate_call(
             tool_name="delete_prod_db",
@@ -185,8 +185,8 @@ def test_end_to_end_denied_raises_guard_blocked():
         timeout_s=5,
     )
 
-    from tollgate._engine import evaluate_call
-    from tollgate._scope import current_scope
+    from charter._engine import evaluate_call
+    from charter._scope import current_scope
 
     responses = [
         _response({"ok": True, "ts": "1.1"}),
@@ -194,7 +194,7 @@ def test_end_to_end_denied_raises_guard_blocked():
     ]
     with (
         patch(
-            "tollgate.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
+            "charter.escalation.slack.urllib.request.urlopen", side_effect=lambda *a, **kw: responses.pop(0)
         ),
         pytest.raises(GuardBlocked),
     ):

@@ -4,13 +4,13 @@ import warnings
 
 import pytest
 
-from tollgate._scope import current_scope
-from tollgate.core.interceptor import TollgateInterceptor
-from tollgate.core.policy_set import PolicySet
-from tollgate.core.reversible import ReversibleAction
-from tollgate.decisions import BLOCK, GuardBlocked
-from tollgate.errors import ConfigurationWarning
-from tollgate.ledger.ledger import ActionLedger
+from charter._scope import current_scope
+from charter.core.interceptor import CharterInterceptor
+from charter.core.policy_set import PolicySet
+from charter.core.reversible import ReversibleAction
+from charter.decisions import BLOCK, GuardBlocked
+from charter.errors import ConfigurationWarning
+from charter.ledger.ledger import ActionLedger
 
 
 def _blocking_policy():
@@ -20,13 +20,13 @@ def _blocking_policy():
 
 
 def test_enforce_mode_blocks():
-    interceptor = TollgateInterceptor(policies=[_blocking_policy()], mode="enforce")
+    interceptor = CharterInterceptor(policies=[_blocking_policy()], mode="enforce")
     with pytest.raises(GuardBlocked):
         interceptor.call("t", lambda: {"ok": True})
 
 
 def test_dry_run_mode_never_blocks_but_records():
-    interceptor = TollgateInterceptor(policies=[_blocking_policy()], mode="dry_run")
+    interceptor = CharterInterceptor(policies=[_blocking_policy()], mode="dry_run")
     result = interceptor.call("t", lambda: {"ok": True})
     assert result == {"ok": True}
     events = ActionLedger.current().events()
@@ -34,7 +34,7 @@ def test_dry_run_mode_never_blocks_but_records():
 
 
 def test_observe_mode_never_blocks_but_records():
-    interceptor = TollgateInterceptor(policies=[_blocking_policy()], mode="observe")
+    interceptor = CharterInterceptor(policies=[_blocking_policy()], mode="observe")
     result = interceptor.call("t", lambda: {"ok": True})
     assert result == {"ok": True}
     events = ActionLedger.current().events()
@@ -42,14 +42,14 @@ def test_observe_mode_never_blocks_but_records():
 
 
 def test_wrap_tool_routes_calls_through_interceptor():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
     wrapped = interceptor.wrap_tool("t", lambda x: x * 2)
     assert wrapped(x=21) == 42
     assert "t" in interceptor.wrapped_tools
 
 
 def test_use_wraps_dict_tools_via_generic_adapter():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     class Agent:
         def __init__(self):
@@ -64,7 +64,7 @@ def test_otel_tracer_is_honored_without_configure_otel():
     """An interceptor's own `otel_tracer` must emit spans to that provider even
     if the global `configure_otel()` was never called — see CLAUDE.md's
     Sampling/OTEL notes; this used to be a silently-ignored parameter."""
-    from tollgate.otel.config import otel_available, reset_otel
+    from charter.otel.config import otel_available, reset_otel
 
     if not otel_available():
         pytest.skip("requires the otel extra")
@@ -78,17 +78,17 @@ def test_otel_tracer_is_honored_without_configure_otel():
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    interceptor = TollgateInterceptor(policies=[_blocking_policy()], mode="observe", otel_tracer=provider)
+    interceptor = CharterInterceptor(policies=[_blocking_policy()], mode="observe", otel_tracer=provider)
     interceptor.call("t", lambda: {"ok": True})
 
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].name == "tollgate.evaluate"
+    assert spans[0].name == "charter.evaluate"
     reset_otel()
 
 
 def test_step_counters_evict_oldest_session_beyond_max_sessions():
-    interceptor = TollgateInterceptor(policies=[], max_sessions=2)
+    interceptor = CharterInterceptor(policies=[], max_sessions=2)
     interceptor.call("t", lambda: None, session_id="s1")
     interceptor.call("t", lambda: None, session_id="s2")
     interceptor.call("t", lambda: None, session_id="s3")
@@ -101,7 +101,7 @@ def test_step_counters_evict_oldest_session_beyond_max_sessions():
 
 
 async def test_acall_enforces_and_records():
-    interceptor = TollgateInterceptor(policies=[_blocking_policy()], mode="enforce")
+    interceptor = CharterInterceptor(policies=[_blocking_policy()], mode="enforce")
 
     async def tool():
         return {"ok": True}
@@ -111,7 +111,7 @@ async def test_acall_enforces_and_records():
 
 
 async def test_acall_allows_a_passing_async_tool():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def tool(x):
         return x * 2
@@ -120,7 +120,7 @@ async def test_acall_allows_a_passing_async_tool():
 
 
 def test_wrap_tool_auto_detects_async_and_returns_awaitable():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def tool(x):
         return x * 2
@@ -135,7 +135,7 @@ def test_wrap_tool_auto_detects_async_and_returns_awaitable():
 
 
 async def test_use_wraps_mixed_sync_and_async_tools():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def async_double(x):
         return x * 2
@@ -157,7 +157,7 @@ def test_step_index_is_unique_under_concurrent_calls():
     import sys
     import threading
 
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
     seen: list[int] = []
     seen_lock = threading.Lock()
     n_threads, per_thread = 8, 60
@@ -194,7 +194,7 @@ def test_step_index_is_unique_under_concurrent_calls():
 def test_args_mapping_reaches_a_tool_that_declares_domain():
     """`domain` is an ordinary argument name for a real tool; `args={...}` is
     the escape hatch that keeps it out of the interceptor's namespace."""
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def send(domain, body):
         return f"{body}@{domain}"
@@ -206,7 +206,7 @@ def test_args_mapping_is_what_policies_see():
     seen = {}
     policy = PolicySet("capture")
     policy.require(lambda ctx: seen.update(ctx.args) or True, on_fail=BLOCK, reason="never")
-    interceptor = TollgateInterceptor(policies=[policy])
+    interceptor = CharterInterceptor(policies=[policy])
 
     interceptor.call("send", lambda domain: domain, args={"domain": "example.com"})
 
@@ -214,7 +214,7 @@ def test_args_mapping_is_what_policies_see():
 
 
 def test_args_and_kwargs_are_merged_with_kwargs_winning():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def tool(a, b):
         return (a, b)
@@ -223,7 +223,7 @@ def test_args_and_kwargs_are_merged_with_kwargs_winning():
 
 
 def test_passing_domain_for_a_tool_that_declares_it_warns():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def send(domain, body):
         return f"{body}@{domain}"
@@ -233,7 +233,7 @@ def test_passing_domain_for_a_tool_that_declares_it_warns():
 
 
 def test_passing_session_id_for_a_tool_that_declares_it_warns():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def resume(session_id):
         return session_id
@@ -243,7 +243,7 @@ def test_passing_session_id_for_a_tool_that_declares_it_warns():
 
 
 def test_no_warning_when_the_tool_declares_neither_reserved_name():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def tool(x):
         return x
@@ -257,7 +257,7 @@ def test_args_mapping_and_interceptor_domain_coexist_without_warning():
     """With `args={...}` the two namespaces are already apart: the tool gets
     its own `domain`, the scope gets the interceptor's, and there is nothing
     to warn about."""
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def send(domain):
         return (domain, current_scope().domain)
@@ -277,7 +277,7 @@ def test_reversible_action_treats_reserved_names_as_interceptor_options():
     examples/clinical.py), and a warning that fires on correct code teaches
     people to ignore warnings."""
     action = ReversibleAction(do_fn=lambda args: args, undo_fn=None, name="send")
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", ConfigurationWarning)
@@ -289,7 +289,7 @@ def test_reversible_action_treats_reserved_names_as_interceptor_options():
 
 def test_reversible_action_reaches_its_arguments_through_args():
     action = ReversibleAction(do_fn=lambda args: args, undo_fn=None, name="send")
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", ConfigurationWarning)
@@ -303,7 +303,7 @@ def test_reversible_action_reaches_its_arguments_through_args():
 def test_wrap_tool_forwards_reserved_names_as_tool_arguments():
     """An agent framework invoking a wrapped tool is passing the model's
     arguments, so a `session_id` parameter must reach the tool intact."""
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def resume(session_id, domain):
         return f"{session_id}/{domain}"
@@ -313,7 +313,7 @@ def test_wrap_tool_forwards_reserved_names_as_tool_arguments():
 
 
 async def test_wrap_tool_forwards_reserved_names_for_an_async_tool():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def resume(session_id):
         return session_id
@@ -325,7 +325,7 @@ async def test_wrap_tool_forwards_reserved_names_for_an_async_tool():
 def test_tool_arguments_may_be_named_tool_name_and_func():
     """`tool_name`/`func` are positional-only on call(), so a tool may declare
     parameters by those names."""
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     def register(tool_name, func):
         return f"{tool_name}:{func}"
@@ -334,7 +334,7 @@ def test_tool_arguments_may_be_named_tool_name_and_func():
 
 
 async def test_acall_accepts_an_args_mapping_for_a_shadowing_tool():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def send(domain, session_id):
         return f"{session_id}@{domain}"
@@ -344,7 +344,7 @@ async def test_acall_accepts_an_args_mapping_for_a_shadowing_tool():
 
 
 async def test_acall_warns_when_a_reserved_name_is_shadowed():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     async def send(domain):
         return domain
@@ -354,14 +354,14 @@ async def test_acall_warns_when_a_reserved_name_is_shadowed():
 
 
 def test_session_id_still_reaches_the_scope_when_not_shadowed():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     assert interceptor.call("probe", lambda: current_scope().session_id, session_id="s1") == "s1"
     assert interceptor.call("probe", lambda: current_scope().domain, domain="example.com") == "example.com"
 
 
 def test_scope_defaults_when_session_id_and_domain_are_left_unset():
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
 
     assert interceptor.call("probe", lambda: current_scope().session_id) == "default"
     assert interceptor.call("probe", lambda: current_scope().domain) is None
@@ -369,8 +369,8 @@ def test_scope_defaults_when_session_id_and_domain_are_left_unset():
 
 def test_per_interceptor_ledgers_stay_separate_from_each_other_and_the_global_one():
     ledger_a, ledger_b = ActionLedger(), ActionLedger()
-    a = TollgateInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_a)
-    b = TollgateInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_b)
+    a = CharterInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_a)
+    b = CharterInterceptor(policies=[_blocking_policy()], mode="observe", ledger=ledger_b)
 
     a.call("tool_a", lambda: None)
     b.call("tool_b", lambda: None)
@@ -382,7 +382,7 @@ def test_per_interceptor_ledgers_stay_separate_from_each_other_and_the_global_on
 
 def test_interceptor_ledger_records_tool_errors_too():
     ledger = ActionLedger()
-    interceptor = TollgateInterceptor(policies=[], ledger=ledger)
+    interceptor = CharterInterceptor(policies=[], ledger=ledger)
 
     def broken():
         raise RuntimeError("boom")
@@ -409,7 +409,7 @@ def test_interceptor_redactor_is_what_scrubs_the_recorded_args():
     ledger = ActionLedger()
     policy = PolicySet("deny")
     policy.require(lambda ctx: False, on_fail=BLOCK, reason="the secret is bad")
-    interceptor = TollgateInterceptor(
+    interceptor = CharterInterceptor(
         policies=[policy], mode="observe", ledger=ledger, redactor=_KeyErasingRedactor()
     )
 
@@ -422,7 +422,7 @@ def test_interceptor_redactor_is_what_scrubs_the_recorded_args():
 
 async def test_interceptor_redactor_and_ledger_apply_to_acall_too():
     ledger = ActionLedger()
-    interceptor = TollgateInterceptor(policies=[], ledger=ledger, redactor=_KeyErasingRedactor())
+    interceptor = CharterInterceptor(policies=[], ledger=ledger, redactor=_KeyErasingRedactor())
 
     async def broken(token):
         raise RuntimeError("boom")
@@ -436,7 +436,7 @@ async def test_interceptor_redactor_and_ledger_apply_to_acall_too():
 def test_wrapped_tools_registry_is_safe_under_concurrent_wrapping():
     import threading
 
-    interceptor = TollgateInterceptor(policies=[])
+    interceptor = CharterInterceptor(policies=[])
     barrier = threading.Barrier(8)
 
     def worker(index: int):

@@ -7,9 +7,9 @@ agents_sdk = pytest.importorskip("agents")
 from agents import Agent, RunConfig, function_tool  # noqa: E402
 from agents.tool_context import ToolContext  # noqa: E402
 
-from tollgate import BLOCK, PolicySet, TollgateInterceptor  # noqa: E402
-from tollgate.adapters.openai_agents import OpenAIAgentsAdapter  # noqa: E402
-from tollgate.decisions import GuardBlocked  # noqa: E402
+from charter import BLOCK, CharterInterceptor, PolicySet  # noqa: E402
+from charter.adapters.openai_agents import OpenAIAgentsAdapter  # noqa: E402
+from charter.decisions import GuardBlocked  # noqa: E402
 
 
 @function_tool
@@ -47,7 +47,7 @@ def test_applies_to_false_for_unrelated_object():
 
 
 async def test_install_wraps_bare_list_in_place():
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     tools = [add]
 
     result = OpenAIAgentsAdapter().install(tools, interceptor)
@@ -60,7 +60,7 @@ async def test_install_wraps_bare_list_in_place():
 
 
 async def test_install_wraps_agent_tools_in_place():
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     agent = Agent(name="test", tools=[add])
 
     result = OpenAIAgentsAdapter().install(agent, interceptor)
@@ -72,10 +72,10 @@ async def test_install_wraps_agent_tools_in_place():
 
 
 async def test_use_auto_registers_openai_agents_adapter_without_manual_registration():
-    """OpenAIAgentsAdapter is registered by default via `tollgate.adapters`
-    (imported the first time `interceptor.use()`/`tollgate.wrap()` runs) — no
+    """OpenAIAgentsAdapter is registered by default via `charter.adapters`
+    (imported the first time `interceptor.use()`/`charter.wrap()` runs) — no
     explicit `register_adapter()` call should be required."""
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     tools = [add]
 
     wrapped = interceptor.use(tools)

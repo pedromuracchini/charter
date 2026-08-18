@@ -1,7 +1,7 @@
 import sys
 import threading
 
-from tollgate.state import CallState
+from charter.state import CallState
 
 
 def test_counts_are_per_session_and_per_tool():

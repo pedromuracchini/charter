@@ -1,6 +1,6 @@
 # Architecture
 
-This page explains *why* Tollgate is shaped the way it is. For signature-level
+This page explains *why* Charter is shaped the way it is. For signature-level
 detail see the [API reference](reference/index.md); for how to use each
 feature, the [home page](index.md).
 
@@ -9,11 +9,11 @@ feature, the [home page](index.md).
 An agent's authorization rules must not live in the agent's prompt. Anything
 the model can read, the model can be argued out of — and an instruction like
 "never delete production data" is a suggestion to a text generator, not a
-control. Tollgate expresses those rules as ordinary Python predicates evaluated
+control. Charter expresses those rules as ordinary Python predicates evaluated
 by the runtime, outside the model's context. The LLM never sees a policy,
 cannot enumerate them, and cannot reason its way past one.
 
-Tollgate is **middleware, not a harness**. It does not run a plan→act→observe
+Charter is **middleware, not a harness**. It does not run a plan→act→observe
 loop, manage context or memory, or execute tools. It decides whether a tool
 call may proceed and what to do when it may not: block it, escalate it to a
 human, or let it run and undo it afterwards. It sits between an agent's
@@ -23,8 +23,8 @@ and the tools themselves.
 ## One chokepoint
 
 `evaluate_call()` and its async twin `evaluate_call_async()` are the only
-places a guarded call actually runs. `@guard`, `TollgateInterceptor.call()` and
-`TollgateInterceptor.acall()` are thin call-sites: they assemble a
+places a guarded call actually runs. `@guard`, `CharterInterceptor.call()` and
+`CharterInterceptor.acall()` are thin call-sites: they assemble a
 `GuardContext`, gather the applicable policies, and hand off. None of them
 duplicates pre/post, escalation, undo, ledger or telemetry logic.
 
@@ -115,13 +115,13 @@ so caller identity has to arrive some other way. `ExecutionScope`, propagated
 through a `contextvars.ContextVar`, carries session, role, trust level and
 delegation chain. The interceptor installs a fresh scope per call, so a
 `@guard`-decorated helper invoked *from inside* an intercepted tool sees the
-same caller. Outside any interceptor, `tollgate.session(...)` sets it
+same caller. Outside any interceptor, `charter.session(...)` sets it
 explicitly.
 
 Tool arguments and interceptor options live in separate namespaces. `call()`
 takes the tool's arguments as `**kwargs` for brevity, but a tool that declares
 an argument named `session_id` or `domain` must pass `args={...}` instead —
-and Tollgate warns when it detects the collision rather than silently dropping
+and Charter warns when it detects the collision rather than silently dropping
 the value.
 
 ## `Policy` is one interface over very different rule shapes
@@ -165,7 +165,7 @@ an approval.
 The ledger decision stays `"ESCALATE"` regardless of outcome; whether it was
 approved is folded into the reason text, while the engine separately tracks
 whether the call may proceed. Real handlers — Slack, webhook, CLI — ship in
-`tollgate.escalation` and are deliberately *not* auto-registered: there is no
+`charter.escalation` and are deliberately *not* auto-registered: there is no
 way to detect that an agent wants Slack.
 
 ## Redaction happens at record time
@@ -240,10 +240,10 @@ agent B, B has access A doesn't, and nothing ever explicitly authorized that —
 the confused-deputy problem. A collection of individually safe agents is not a
 collectively safe system.
 
-Tollgate's answer is to share the tool but never share an interceptor without
+Charter's answer is to share the tool but never share an interceptor without
 identity. The same tool function passed to two interceptors can be BLOCK for
 one agent and ALLOW for another, because `ctx.caller_role` differs. For many or
-dynamic agents, one shared `TollgateRegistry` replaces per-interceptor wiring.
+dynamic agents, one shared `CharterRegistry` replaces per-interceptor wiring.
 
 `delegation_chain` has one convention: **register ancestors, read the full
 path.** The registry takes the agent's ancestors; the interceptor appends the
@@ -251,7 +251,7 @@ acting agent when building the scope, so every context, ledger event and graph
 sees the complete lineage. `delegation_depth()` counts hops, not names.
 
 An interceptor with no `agent_id` leaves `ctx.caller_role` permanently `None`,
-silently defeating any role-scoped policy. `tollgate lint` reports that as an
+silently defeating any role-scoped policy. `charter lint` reports that as an
 error.
 
 ## Sampling is rolled once
@@ -265,7 +265,7 @@ both the entry and its span.
 
 A tool that raises is recorded unconditionally and never sampled: the call was
 authorized, ran and failed, and an audit trail that omits that is lying by
-omission. No span is emitted for it, because Tollgate decided nothing there —
+omission. No span is emitted for it, because Charter decided nothing there —
 whatever instruments the tool owns that part of the trace.
 
 ## Deliberately out of scope
@@ -288,11 +288,11 @@ Some things are missing on purpose rather than by omission:
   cover the "get this data out in a reviewable form" need without a rendering
   dependency.
 
-## What Tollgate is not
+## What Charter is not
 
 The shipped policy matchers — destructive SQL and shell, path confinement,
 domain allowlists — are **seatbelts against agent mistakes and opportunistic
 prompt injection, not a sandbox.** An adversary in full control of the input
 can evade a pattern matcher. If your threat model includes that adversary, the
-answer is a real sandbox with a real kernel boundary; Tollgate is the
+answer is a real sandbox with a real kernel boundary; Charter is the
 authorization and reversibility layer that sits above it.

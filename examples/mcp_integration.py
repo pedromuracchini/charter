@@ -1,6 +1,6 @@
 """Guarding MCP `tools/call` from both sides, over an in-memory transport.
 
-MCP is how most agents reach tools today, and Tollgate can sit on either end:
+MCP is how most agents reach tools today, and Charter can sit on either end:
 
 - **Client side** — you run the agent and police what it asks any server to
   do. A denial raises `GuardBlocked` into your own calling code.
@@ -24,15 +24,15 @@ from mcp import ClientSession  # noqa: F401  (documents the client type being gu
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
-import tollgate
-from tollgate import ESCALATE, GuardBlocked, PolicySet, TollgateInterceptor
-from tollgate.policies import path_within
+import charter
+from charter import ESCALATE, CharterInterceptor, GuardBlocked, PolicySet
+from charter.policies import path_within
 
 WORKSPACE = "/tmp/agent-workspace"
 
 
 def build_server() -> FastMCP:
-    """An ordinary MCP server. Nothing here knows Tollgate exists."""
+    """An ordinary MCP server. Nothing here knows Charter exists."""
     server = FastMCP("files")
 
     @server.tool()
@@ -65,11 +65,11 @@ def build_policies() -> list:
 
 async def client_side() -> None:
     print("\n=== client side: guarding what the agent asks for ===")
-    interceptor = TollgateInterceptor(policies=build_policies(), agent_id="file_agent")
+    interceptor = CharterInterceptor(policies=build_policies(), agent_id="file_agent")
     server = build_server()
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
-        tollgate.wrap(session, interceptor)  # auto-detected as an MCP ClientSession
+        charter.wrap(session, interceptor)  # auto-detected as an MCP ClientSession
 
         result = await session.call_tool("read_file", {"path": f"{WORKSPACE}/notes.md"})
         print(f"  read inside the workspace : allowed -> {result.content[0].text}")
@@ -86,9 +86,9 @@ async def client_side() -> None:
 
 async def server_side() -> None:
     print("\n=== server side: guarding whoever connects ===")
-    interceptor = TollgateInterceptor(policies=build_policies(), agent_id="mcp_server")
+    interceptor = CharterInterceptor(policies=build_policies(), agent_id="mcp_server")
     server = build_server()
-    tollgate.wrap(server, interceptor)  # auto-detected as a FastMCP server
+    charter.wrap(server, interceptor)  # auto-detected as a FastMCP server
 
     async with create_connected_server_and_client_session(server._mcp_server) as session:
         for name, args in [
@@ -110,7 +110,7 @@ async def main() -> None:
     await server_side()
 
     print("\n=== ledger ===")
-    for event in tollgate.ActionLedger.current().events():
+    for event in charter.ActionLedger.current().events():
         print(f"  {event.decision:<8} {event.tool:<12} {event.caller_agent_id:<12} {event.reason[:60]}")
 
 

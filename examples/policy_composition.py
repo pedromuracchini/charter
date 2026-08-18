@@ -8,13 +8,13 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import (
+from charter import (
     BLOCK,
     AgentScopedPolicy,
+    CharterInterceptor,
+    CharterRegistry,
     GuardBlocked,
     PolicySet,
-    TollgateInterceptor,
-    TollgateRegistry,
 )
 
 # --- AND: both conditions must hold ---
@@ -56,7 +56,7 @@ canary_healthy_policy.require(
 rollback_requires_evidence_policy = ~canary_healthy_policy
 
 
-registry = TollgateRegistry()
+registry = CharterRegistry()
 registry.register("release_bot", role="ci")
 registry.register("oncall_engineer", role="incident_commander")
 
@@ -70,9 +70,9 @@ def rollback(service: str, error_rate: float = 0.0) -> dict:
 
 
 def main() -> None:
-    release_bot = TollgateInterceptor(registry=registry, agent_id="release_bot", policies=[deploy_policy])
-    oncall = TollgateInterceptor(registry=registry, agent_id="oncall_engineer", policies=[deploy_policy])
-    rollback_interceptor = TollgateInterceptor(policies=[rollback_requires_evidence_policy])
+    release_bot = CharterInterceptor(registry=registry, agent_id="release_bot", policies=[deploy_policy])
+    oncall = CharterInterceptor(registry=registry, agent_id="oncall_engineer", policies=[deploy_policy])
+    rollback_interceptor = CharterInterceptor(policies=[rollback_requires_evidence_policy])
 
     # AND: fails without both tests_passed and approved_by.
     try:

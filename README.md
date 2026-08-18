@@ -1,49 +1,49 @@
-# Tollgate
+# Charter
 
-[![CI](https://github.com/tollgate-dev/tollgate/actions/workflows/ci.yml/badge.svg)](https://github.com/tollgate-dev/tollgate/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/tollgate.svg)](https://pypi.org/project/tollgate/)
-[![Python](https://img.shields.io/pypi/pyversions/tollgate.svg)](https://pypi.org/project/tollgate/)
+[![CI](https://github.com/pedromuracchini/charter/actions/workflows/ci.yml/badge.svg)](https://github.com/pedromuracchini/charter/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/charter.svg)](https://pypi.org/project/charter/)
+[![Python](https://img.shields.io/pypi/pyversions/charter.svg)](https://pypi.org/project/charter/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-tollgate--dev.github.io-teal.svg)](https://tollgate-dev.github.io/tollgate/)
+[![Docs](https://img.shields.io/badge/docs-pedromuracchini.github.io-teal.svg)](https://pedromuracchini.github.io/charter/)
 
-Tollgate expresses AI agent authorization policies as deterministic, code-defined
+Charter expresses AI agent authorization policies as deterministic, code-defined
 predicates evaluated by the runtime — never as natural-language instructions in a
-prompt. Every tool call passes through the tollgate (pre-hook and post-hook)
+prompt. Every tool call passes through the gate (pre-hook and post-hook)
 before and after it executes. The LLM never sees, interprets, or reasons its way
 around a policy: policies are plain Python, evaluated outside the model's context.
 
 Framework-agnostic — it's a middleware layer between an agent and its tools, not a
 full agent harness. The
-[architecture guide](https://tollgate-dev.github.io/tollgate/architecture/)
+[architecture guide](https://pedromuracchini.github.io/charter/architecture/)
 explains the design rationale; the
-[API reference](https://tollgate-dev.github.io/tollgate/reference/) has the
+[API reference](https://pedromuracchini.github.io/charter/reference/) has the
 signature-level detail.
 
 ## Install
 
 ```bash
-uv add tollgate                        # or: pip install tollgate
-uv add "tollgate[otel]"                # with OpenTelemetry spans/metrics
-uv add "tollgate[langgraph]"           # to wrap LangChain/LangGraph tools
-uv add "tollgate[openai-agents]"       # to wrap OpenAI Agents SDK tools
-uv add "tollgate[mcp]"                 # to guard MCP tools/call, client or server side
-uv add "tollgate[all]"                 # every optional integration at once
+uv add charter                        # or: pip install charter
+uv add "charter[otel]"                # with OpenTelemetry spans/metrics
+uv add "charter[langgraph]"           # to wrap LangChain/LangGraph tools
+uv add "charter[openai-agents]"       # to wrap OpenAI Agents SDK tools
+uv add "charter[mcp]"                 # to guard MCP tools/call, client or server side
+uv add "charter[all]"                 # every optional integration at once
 ```
 
 ## Batteries included
 
-`tollgate.policies` ships the rules nearly every agent needs, so you don't
+`charter.policies` ships the rules nearly every agent needs, so you don't
 start from a blank lambda. Each returns an ordinary `PolicySet` and composes
 with `&` / `|` / `~` like anything you'd write by hand:
 
 ```python
-from tollgate import TollgateInterceptor
-from tollgate.policies import (
+from charter import CharterInterceptor
+from charter.policies import (
     budget_policy, domain_allowlist, no_destructive_shell,
     no_secrets_in_args, path_within, rate_limit_policy, token_budget_policy,
 )
 
-interceptor = TollgateInterceptor(policies=[
+interceptor = CharterInterceptor(policies=[
     no_secrets_in_args(),                                   # API keys, JWTs, PEM blocks
     no_destructive_shell(tool_names=("run_shell",)),        # rm -rf, mkfs, dd of=/dev/...
     path_within(["/srv/workspace"], tool_names=("write_file",)),
@@ -89,7 +89,7 @@ them.
 ## Quickstart
 
 ```python
-from tollgate import guard, BLOCK, ESCALATE
+from charter import guard, BLOCK, ESCALATE
 
 @guard(
     pre=lambda ctx: ctx.state_checksum_matches(),
@@ -109,22 +109,22 @@ def transfer_funds(amount: float, to: str) -> dict:
     ...
 ```
 
-A blocked or denied-escalation call raises `tollgate.GuardBlocked` instead of
+A blocked or denied-escalation call raises `charter.GuardBlocked` instead of
 running. Guarded functions keep their original signature — call them
 positionally or by keyword as usual — and `ctx.args` is always the flat
 name → value mapping, mirroring how agent frameworks pass tool-call arguments
 as a JSON object.
 
-Every error Tollgate raises on purpose derives from `tollgate.TollgateError`,
+Every error Charter raises on purpose derives from `charter.CharterError`,
 so one `except` clause catches the library's failures without swallowing your
 own bugs:
 
 ```python
 try:
     transfer_funds(amount=1000, to="alice")
-except tollgate.GuardBlocked as exc:
+except charter.GuardBlocked as exc:
     print(exc.decision.reason, exc.decision.policy_name)
-except tollgate.TollgateError:
+except charter.CharterError:
     ...  # misconfiguration, escalation transport failure, ledger problem
 ```
 
@@ -138,7 +138,7 @@ always denies (fail-safe) — register a real handler to actually resolve it:
 ```python
 import os
 
-from tollgate import SlackEscalationHandler, register_handler
+from charter import SlackEscalationHandler, register_handler
 
 register_handler(
     "slack",
@@ -160,9 +160,9 @@ end to end.
 ## Multi-agent: the same tool, different outcomes per caller
 
 ```python
-from tollgate import TollgateRegistry, TollgateInterceptor, AgentScopedPolicy, BLOCK
+from charter import CharterRegistry, CharterInterceptor, AgentScopedPolicy, BLOCK
 
-registry = TollgateRegistry()
+registry = CharterRegistry()
 registry.register("clinical_agent", role="licensed_physician")
 registry.register("support_agent", role="support_staff")
 
@@ -174,8 +174,8 @@ delete_policy = AgentScopedPolicy(
     reason="deleting a patient record is restricted to physicians",
 )
 
-clinical = TollgateInterceptor(registry=registry, agent_id="clinical_agent", policies=[delete_policy])
-support = TollgateInterceptor(registry=registry, agent_id="support_agent", policies=[delete_policy])
+clinical = CharterInterceptor(registry=registry, agent_id="clinical_agent", policies=[delete_policy])
+support = CharterInterceptor(registry=registry, agent_id="support_agent", policies=[delete_policy])
 
 clinical.call("delete_patient", delete_patient, id=1)  # allowed
 support.call("delete_patient", delete_patient, id=1)   # GuardBlocked
@@ -183,7 +183,7 @@ support.call("delete_patient", delete_patient, id=1)   # GuardBlocked
 
 `call()` takes the tool's arguments as keywords for brevity, but `session_id`
 and `domain` are its own parameters. If your tool declares an argument by
-either name, pass the arguments explicitly instead — Tollgate warns rather than
+either name, pass the arguments explicitly instead — Charter warns rather than
 silently dropping one:
 
 ```python
@@ -202,7 +202,7 @@ uv run python examples/clinical.py
 
 ## Async tools
 
-`@guard` and `TollgateInterceptor.acall()` auto-detect an `async def` tool
+`@guard` and `CharterInterceptor.acall()` auto-detect an `async def` tool
 function — no separate decorator or interceptor class needed:
 
 ```python
@@ -219,7 +219,7 @@ Run the full worked example with `uv run python examples/async_tool.py`.
 
 ## Framework integration
 
-`interceptor.use(agent)` (or the module-level `tollgate.wrap(agent, interceptor)`)
+`interceptor.use(agent)` (or the module-level `charter.wrap(agent, interceptor)`)
 auto-detects LangChain/LangGraph `BaseTool` objects and OpenAI Agents SDK
 `FunctionTool` objects — no manual adapter registration needed:
 
@@ -237,21 +237,21 @@ MCP is auto-detected too, on either side of the protocol:
 
 ```python
 # Client side — police what your agent asks any server to do. A denial raises.
-tollgate.wrap(client_session, interceptor)
+charter.wrap(client_session, interceptor)
 
 # Server side — the policy holds whoever connects. A denial returns
 # CallToolResult(isError=True), because raising would kill the connection.
-tollgate.wrap(fastmcp_server, interceptor)
+charter.wrap(fastmcp_server, interceptor)
 ```
 
-Requires the matching extra (`tollgate[langgraph]` / `tollgate[openai-agents]` /
-`tollgate[mcp]`). Run `uv run python examples/langgraph_integration.py`,
+Requires the matching extra (`charter[langgraph]` / `charter[openai-agents]` /
+`charter[mcp]`). Run `uv run python examples/langgraph_integration.py`,
 `examples/openai_agents_integration.py`, or `examples/mcp_integration.py`.
 
 ## Reversible actions
 
 ```python
-from tollgate import ReversibleAction
+from charter import ReversibleAction
 
 delete_s3_bucket = ReversibleAction(
     do_fn=lambda args: s3.delete_bucket(args["bucket"]),
@@ -269,7 +269,7 @@ is an unconditional block — the action never runs.
 
 A `"high"` action needs an `escalate_to` target to differ from `"permanent"`:
 with none, its escalation resolves to the fail-safe handler, which denies, so
-every call is blocked. `tollgate lint` warns about this.
+every call is blocked. `charter lint` warns about this.
 
 ## Examples
 
@@ -284,13 +284,13 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `real_escalation_handlers.py` | The three built-in real handlers — `SlackEscalationHandler`, `WebhookEscalationHandler`, `CLIEscalationHandler` — each demonstrated end to end. |
 | `reversible_levels.py` | `ReversibleAction`'s four `irreversibility_level`s side by side. |
 | `delegation_chain.py` | Confused-deputy prevention via delegation-chain depth (`max_delegation_depth_policy`), not just role. |
-| `clinical.py` | The full multi-agent story: `TollgateRegistry`, `AgentScopedPolicy`, `ReversibleAction`, escalation, two interceptors sharing one tool. |
+| `clinical.py` | The full multi-agent story: `CharterRegistry`, `AgentScopedPolicy`, `ReversibleAction`, escalation, two interceptors sharing one tool. |
 | `multi_agent_orchestrator.py` | A centralized registry with 4 agents, several tools, role + trust-level policies together, and an exported delegation graph. |
-| `async_tool.py` | `@guard` and `TollgateInterceptor.acall()` on `async def` tools. |
-| `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `tollgate[langgraph]`). |
-| `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `tollgate[openai-agents]`). |
-| `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `tollgate[mcp]`). |
-| `builtin_policies.py` | Every policy in `tollgate.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
+| `async_tool.py` | `@guard` and `CharterInterceptor.acall()` on `async def` tools. |
+| `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `charter[langgraph]`). |
+| `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `charter[openai-agents]`). |
+| `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `charter[mcp]`). |
+| `builtin_policies.py` | Every policy in `charter.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
 | `redaction.py` | Keeping secrets and PII out of the ledger, the JSONL sink, the exports and the Slack message. |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
@@ -302,13 +302,13 @@ durability story. For a full lossless history, point it at a JSONL file once at
 startup, before the first guarded call:
 
 ```python
-import tollgate
+import charter
 
-tollgate.configure_ledger(sink_path="/var/log/tollgate/decisions.jsonl")
+charter.configure_ledger(sink_path="/var/log/charter/decisions.jsonl")
 ```
 
 Every event is mirrored to that file regardless of the in-memory cap, and
-`tollgate report --ledger /var/log/tollgate/decisions.jsonl` reads it back. A
+`charter report --ledger /var/log/charter/decisions.jsonl` reads it back. A
 sink write that fails is logged and counted in `ActionLedger.sink_error_count`,
 never raised: recording happens after the tool has already run, so a full disk
 must not turn a call the policies allowed into an exception.
@@ -317,7 +317,7 @@ For several tenants in one process, give each interceptor its own ledger
 instead of configuring the global one:
 
 ```python
-interceptor = TollgateInterceptor(policies=[...], ledger=ActionLedger(sink_path=...))
+interceptor = CharterInterceptor(policies=[...], ledger=ActionLedger(sink_path=...))
 ```
 
 ### Redaction
@@ -338,12 +338,12 @@ patterns (email, SSN, IBAN, Luhn-checked card numbers) are opt-in, because an
 email address is often the point of the call:
 
 ```python
-tollgate.configure_redaction(include_pii=True, keys=["mrn", "dob"])
-tollgate.configure_redaction(enabled=False)          # off entirely
-tollgate.configure_redaction(redactor=MyDLPClient())  # your own scrubber
+charter.configure_redaction(include_pii=True, keys=["mrn", "dob"])
+charter.configure_redaction(enabled=False)          # off entirely
+charter.configure_redaction(redactor=MyDLPClient())  # your own scrubber
 ```
 
-One tradeoff: `tollgate.replay()` reconstructs its context from the stored
+One tradeoff: `charter.replay()` reconstructs its context from the stored
 event, so replaying a redacted call feeds placeholders to the predicates.
 `ReplayResult.redacted` flags it, and `export --format fixtures` skips those
 events instead of emitting tests that cannot pass. Run
@@ -352,16 +352,16 @@ events instead of emitting tests that cannot pass. Run
 ## CLI
 
 ```bash
-uv run tollgate --version
-uv run tollgate report --agent my_agent.py                        # policy inventory + coverage
-uv run tollgate report --agent my_agent.py --format mermaid       # coverage graph
-uv run tollgate report --agent my_agent.py --delegation           # delegation graph
-uv run tollgate report --agent my_agent.py --fail-under 0.8       # CI gate on tool coverage
-uv run tollgate lint --agent my_agent.py                          # static policy checks
-uv run tollgate replay evt_a3f9b2                                 # replay a ledger event
-uv run tollgate repl --agent my_agent.py                          # synthetic-context REPL
-uv run tollgate export --format narrative --ledger audit.jsonl    # plain-English audit summary
-uv run tollgate export --format fixtures -o test_policies.py      # pytest tests from real decisions
+uv run charter --version
+uv run charter report --agent my_agent.py                        # policy inventory + coverage
+uv run charter report --agent my_agent.py --format mermaid       # coverage graph
+uv run charter report --agent my_agent.py --delegation           # delegation graph
+uv run charter report --agent my_agent.py --fail-under 0.8       # CI gate on tool coverage
+uv run charter lint --agent my_agent.py                          # static policy checks
+uv run charter replay evt_a3f9b2                                 # replay a ledger event
+uv run charter repl --agent my_agent.py                          # synthetic-context REPL
+uv run charter export --format narrative --ledger audit.jsonl    # plain-English audit summary
+uv run charter export --format fixtures -o test_policies.py      # pytest tests from real decisions
 ```
 
 `report --fail-under` and `lint` both exit non-zero on failure, so they work as
@@ -379,14 +379,14 @@ uv sync --extra all
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src/tollgate
+uv run mypy src/charter
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and
 CI enforces it — see `CONTRIBUTING.md`.
 
 Docs are published at
-[tollgate-dev.github.io/tollgate](https://tollgate-dev.github.io/tollgate/),
+[pedromuracchini.github.io/charter](https://pedromuracchini.github.io/charter/),
 assembled from this repository's markdown plus an API reference generated from
 the package's own docstrings:
 

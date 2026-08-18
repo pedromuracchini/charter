@@ -1,8 +1,8 @@
-site_name: Tollgate
+site_name: Charter
 site_description: Deterministic, code-defined guardrails for AI agent tool calls
-site_url: https://tollgate-dev.github.io/tollgate/
-repo_url: https://github.com/tollgate-dev/tollgate
-repo_name: tollgate-dev/tollgate
+site_url: https://pedromuracchini.github.io/charter/
+repo_url: https://github.com/pedromuracchini/charter
+repo_name: pedromuracchini/charter
 # No `edit_uri` / `content.action.edit`: every page under `docs/` is generated
 # by `scripts/build_docs.py` from a source file elsewhere in the repo, so an
 # "edit this page" link would point at a path that does not exist on the
@@ -64,26 +64,26 @@ nav:
   - Architecture: architecture.md
   - Reference:
       - Overview: reference/index.md
-      - Package API: reference/tollgate.md
+      - Package API: reference/charter.md
       - Core:
-          - GuardContext: reference/tollgate/core/context.md
-          - guard: reference/tollgate/core/decorator.md
-          - TollgateInterceptor: reference/tollgate/core/interceptor.md
-          - Policy and PolicySet: reference/tollgate/core/policy_set.md
-          - ReversibleAction: reference/tollgate/core/reversible.md
-          - Escalation interface: reference/tollgate/core/escalation.md
-          - Decisions: reference/tollgate/decisions.md
-          - CallState: reference/tollgate/state.md
-          - Redaction: reference/tollgate/redaction.md
-      - Policy library: reference/tollgate/policies.md
-      - Escalation handlers: reference/tollgate/escalation.md
-      - Framework adapters: reference/tollgate/adapters.md
-      - Multi-agent: reference/tollgate/multiagent.md
-      - Ledger: reference/tollgate/ledger.md
-      - Reports: reference/tollgate/report.md
-      - Linter: reference/tollgate/linter.md
-      - OpenTelemetry: reference/tollgate/otel.md
-      - Testing utilities: reference/tollgate/testing.md
+          - GuardContext: reference/charter/core/context.md
+          - guard: reference/charter/core/decorator.md
+          - CharterInterceptor: reference/charter/core/interceptor.md
+          - Policy and PolicySet: reference/charter/core/policy_set.md
+          - ReversibleAction: reference/charter/core/reversible.md
+          - Escalation interface: reference/charter/core/escalation.md
+          - Decisions: reference/charter/decisions.md
+          - CallState: reference/charter/state.md
+          - Redaction: reference/charter/redaction.md
+      - Policy library: reference/charter/policies.md
+      - Escalation handlers: reference/charter/escalation.md
+      - Framework adapters: reference/charter/adapters.md
+      - Multi-agent: reference/charter/multiagent.md
+      - Ledger: reference/charter/ledger.md
+      - Reports: reference/charter/report.md
+      - Linter: reference/charter/linter.md
+      - OpenTelemetry: reference/charter/otel.md
+      - Testing utilities: reference/charter/testing.md
   - Contributing: contributing.md
   - Security: security.md
   - Changelog: changelog.md

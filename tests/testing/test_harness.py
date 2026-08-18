@@ -1,8 +1,8 @@
 import pytest
 
-from tollgate.ledger.event import LedgerEvent
-from tollgate.redaction import DEFAULT_PLACEHOLDER
-from tollgate.testing.harness import fixtures_from_events
+from charter.ledger.event import LedgerEvent
+from charter.redaction import DEFAULT_PLACEHOLDER
+from charter.testing.harness import fixtures_from_events
 
 
 def _event(event_id="evt_1", policy="p", tool="t", decision="BLOCK", args=None):

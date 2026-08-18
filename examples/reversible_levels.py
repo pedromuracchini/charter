@@ -7,17 +7,17 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import (
+from charter import (
+    CharterInterceptor,
     EscalationHandler,
     GuardBlocked,
     ReversibleAction,
-    TollgateInterceptor,
     register_handler,
 )
 
 _inventory: dict[int, dict] = {1: {"name": "widget", "qty": 10}}
 
-interceptor = TollgateInterceptor(policies=[])
+interceptor = CharterInterceptor(policies=[])
 
 
 class ApproveEverything(EscalationHandler):
@@ -83,7 +83,7 @@ def main() -> None:
 
     # ...and the same action with no `escalate_to`: its escalation resolves to
     # the fail-safe handler, which denies, so it behaves exactly like
-    # "permanent". `tollgate lint` warns about this — it is almost never what
+    # "permanent". `charter lint` warns about this — it is almost never what
     # picking "high" over "permanent" was meant to express.
     unrouted = ReversibleAction(
         do_fn=lambda a: {"deleted": a["id"]},

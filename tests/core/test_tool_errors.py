@@ -6,11 +6,11 @@ and wrote nothing, so an authorized call that ran and blew up was invisible.
 
 import pytest
 
-from tollgate._engine import evaluate_call, evaluate_call_async
-from tollgate._scope import current_scope
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import BLOCK, GuardBlocked
-from tollgate.ledger.ledger import ActionLedger
+from charter._engine import evaluate_call, evaluate_call_async
+from charter._scope import current_scope
+from charter.core.policy_set import PolicySet
+from charter.decisions import BLOCK, GuardBlocked
+from charter.ledger.ledger import ActionLedger
 
 
 def _boom():
@@ -60,7 +60,7 @@ async def test_tool_exception_is_recorded_and_propagated_async():
 
 def test_error_event_carries_caller_identity():
     """A failing cross-agent call must still be attributable."""
-    from tollgate._scope import ExecutionScope
+    from charter._scope import ExecutionScope
 
     scope = ExecutionScope(
         session_id="s1",

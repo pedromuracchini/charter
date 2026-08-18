@@ -27,8 +27,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Tollgate version
-      description: "`uv run tollgate --version`"
+      label: Charter version
+      description: "`uv run charter --version`"
     validations:
       required: true
   - type: input

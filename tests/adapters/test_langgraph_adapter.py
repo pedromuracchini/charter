@@ -4,9 +4,9 @@ langchain_core = pytest.importorskip("langchain_core")
 
 from langchain_core.tools import tool  # noqa: E402
 
-from tollgate import BLOCK, PolicySet, TollgateInterceptor  # noqa: E402
-from tollgate.adapters.langgraph import LangGraphAdapter  # noqa: E402
-from tollgate.decisions import GuardBlocked  # noqa: E402
+from charter import BLOCK, CharterInterceptor, PolicySet  # noqa: E402
+from charter.adapters.langgraph import LangGraphAdapter  # noqa: E402
+from charter.decisions import GuardBlocked  # noqa: E402
 
 
 @tool
@@ -39,7 +39,7 @@ def test_applies_to_false_for_unrelated_object():
 
 
 def test_install_wraps_bare_list_in_place():
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     tools = [add]
 
     result = LangGraphAdapter().install(tools, interceptor)
@@ -56,7 +56,7 @@ def test_install_wraps_tools_attribute_in_place():
         def __init__(self):
             self.tools = [add]
 
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     agent = FakeAgent()
 
     result = LangGraphAdapter().install(agent, interceptor)
@@ -68,7 +68,7 @@ def test_install_wraps_tools_attribute_in_place():
 
 
 async def test_install_wraps_async_path():
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     tools = [add]
 
     LangGraphAdapter().install(tools, interceptor)
@@ -79,10 +79,10 @@ async def test_install_wraps_async_path():
 
 
 def test_use_auto_registers_langgraph_adapter_without_manual_registration():
-    """LangGraphAdapter is registered by default via `tollgate.adapters`
-    (imported the first time `interceptor.use()`/`tollgate.wrap()` runs) —
+    """LangGraphAdapter is registered by default via `charter.adapters`
+    (imported the first time `interceptor.use()`/`charter.wrap()` runs) —
     no explicit `register_adapter()` call should be required."""
-    interceptor = TollgateInterceptor(policies=[_policy()])
+    interceptor = CharterInterceptor(policies=[_policy()])
     tools = [add]
 
     wrapped = interceptor.use(tools)

@@ -9,7 +9,7 @@ Run directly:
 
 from __future__ import annotations
 
-from tollgate import BLOCK, ActionLedger, GuardBlocked, PolicySet, TollgateInterceptor
+from charter import BLOCK, ActionLedger, CharterInterceptor, GuardBlocked, PolicySet
 
 suspicious_amount_policy = PolicySet("suspicious_amount_check")
 suspicious_amount_policy.require(
@@ -28,7 +28,7 @@ def main() -> None:
 
     # Step 1: dry_run — the policy evaluates and everything is logged, but
     # calls are NEVER actually blocked, no matter what the policy decides.
-    dry_run_interceptor = TollgateInterceptor(policies=[suspicious_amount_policy], mode="dry_run")
+    dry_run_interceptor = CharterInterceptor(policies=[suspicious_amount_policy], mode="dry_run")
     result = dry_run_interceptor.call("transfer", transfer, amount=50_000, to="alice")
     print(f"dry_run: call succeeded despite exceeding the threshold -> {result}")
 
@@ -40,7 +40,7 @@ def main() -> None:
 
     # Step 2: satisfied with what dry_run logged, flip the exact same policy
     # to enforce — nothing about the policy itself changes, only the mode.
-    enforce_interceptor = TollgateInterceptor(policies=[suspicious_amount_policy], mode="enforce")
+    enforce_interceptor = CharterInterceptor(policies=[suspicious_amount_policy], mode="enforce")
     try:
         enforce_interceptor.call("transfer", transfer, amount=50_000, to="alice")
     except GuardBlocked as exc:

@@ -1,11 +1,11 @@
 import pytest
 
-from tollgate._scope import ExecutionScope
-from tollgate.core.context import GuardContext
-from tollgate.core.escalation import register_handler
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
-from tollgate.escalation.cli import CLIEscalationHandler
+from charter._scope import ExecutionScope
+from charter.core.context import GuardContext
+from charter.core.escalation import register_handler
+from charter.core.policy_set import PolicySet
+from charter.decisions import ESCALATE, GuardBlocked, RuleResult
+from charter.escalation.cli import CLIEscalationHandler
 
 
 def _ctx():
@@ -99,8 +99,8 @@ def test_end_to_end_through_evaluate_call():
         timeout_s=5,
     )
 
-    from tollgate._engine import evaluate_call
-    from tollgate._scope import current_scope
+    from charter._engine import evaluate_call
+    from charter._scope import current_scope
 
     result = evaluate_call(
         tool_name="delete_prod_db",
@@ -126,8 +126,8 @@ def test_end_to_end_denied_raises_guard_blocked():
         timeout_s=5,
     )
 
-    from tollgate._engine import evaluate_call
-    from tollgate._scope import current_scope
+    from charter._engine import evaluate_call
+    from charter._scope import current_scope
 
     with pytest.raises(GuardBlocked):
         evaluate_call(

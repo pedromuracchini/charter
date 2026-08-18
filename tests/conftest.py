@@ -1,11 +1,11 @@
 import pytest
 
-from tollgate.adapters import register_default_adapters
-from tollgate.adapters.base import reset_adapters
-from tollgate.core.escalation import reset_handlers
-from tollgate.ledger.ledger import ActionLedger
-from tollgate.otel.config import reset_otel
-from tollgate.redaction import reset_redaction
+from charter.adapters import register_default_adapters
+from charter.adapters.base import reset_adapters
+from charter.core.escalation import reset_handlers
+from charter.ledger.ledger import ActionLedger
+from charter.otel.config import reset_otel
+from charter.redaction import reset_redaction
 
 
 def _reset_all() -> None:

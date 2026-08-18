@@ -59,7 +59,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra all
       - name: mypy
-        run: uv run mypy src/tollgate
+        run: uv run mypy src/charter
 
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -109,7 +109,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: >
           uv run --python ${{ matrix.python-version }} pytest
-          --cov=tollgate --cov-report=xml --cov-report=term-missing --cov-fail-under=90
+          --cov=charter --cov-report=xml --cov-report=term-missing --cov-fail-under=90
       - name: Upload coverage.xml
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
@@ -122,7 +122,7 @@ jobs:
     # The optional-dependency story is entirely graceful degradation:
     # `otel/config.py` falls back to no-ops without `opentelemetry`, the
     # adapters only attempt their framework imports lazily inside
-    # `applies_to()`, and `import tollgate` must pull in neither. A job that
+    # `applies_to()`, and `import charter` must pull in neither. A job that
     # installs every extra exercises none of that. This is the one that catches
     # an accidental hard dependency on an optional package.
     name: test (no extras)
@@ -140,12 +140,12 @@ jobs:
           uv run python - <<'PY'
           import importlib.util
 
-          import tollgate  # must not require any extra
+          import charter  # must not require any extra
 
           optional = ("opentelemetry", "langchain_core", "langgraph", "mcp", "agents")
           present = [name for name in optional if importlib.util.find_spec(name) is not None]
           assert not present, f"optional packages unexpectedly installed: {present}"
-          print(f"tollgate {tollgate.__version__} imports with no extras installed")
+          print(f"charter {charter.__version__} imports with no extras installed")
           PY
       - name: pytest
         run: uv run pytest -q
@@ -188,8 +188,8 @@ jobs:
           set -euo pipefail
           uv venv /tmp/smoke
           VIRTUAL_ENV=/tmp/smoke uv pip install dist/*.whl
-          /tmp/smoke/bin/python -c "import tollgate; print(tollgate.__version__)"
-          /tmp/smoke/bin/tollgate --version
+          /tmp/smoke/bin/python -c "import charter; print(charter.__version__)"
+          /tmp/smoke/bin/charter --version
       - name: Verify the sdist ships the tests and examples
         # `source-include` is easy to break without noticing, and a security
         # library whose sdist cannot be tested is one no downstream packager can

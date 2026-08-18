@@ -4,25 +4,25 @@ import warnings
 
 import pytest
 
-from tollgate._engine import (
+from charter._engine import (
     _run_with_timeout,
     _run_with_timeout_async,
     evaluate_call,
     evaluate_call_async,
 )
-from tollgate._scope import ExecutionScope, current_scope, use_scope
-from tollgate.core.context import GuardContext
-from tollgate.core.escalation import (
+from charter._scope import ExecutionScope, current_scope, use_scope
+from charter.core.context import GuardContext
+from charter.core.escalation import (
     EscalationHandler,
     FailSafeEscalationHandler,
     register_handler,
     resolve_handler,
 )
-from tollgate.core.policy_set import PolicySet
-from tollgate.core.reversible import ReversibleAction
-from tollgate.decisions import ESCALATE, GuardBlocked, RuleResult
-from tollgate.errors import ConfigurationError, ConfigurationWarning
-from tollgate.ledger.ledger import ActionLedger
+from charter.core.policy_set import PolicySet
+from charter.core.reversible import ReversibleAction
+from charter.decisions import ESCALATE, GuardBlocked, RuleResult
+from charter.errors import ConfigurationError, ConfigurationWarning
+from charter.ledger.ledger import ActionLedger
 
 
 def _ctx():

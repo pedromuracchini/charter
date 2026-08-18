@@ -1,8 +1,8 @@
-from tollgate.core.policy_set import PolicySet
-from tollgate.decisions import BLOCK
-from tollgate.linter.linter import lint
-from tollgate.multiagent.registry import TollgateRegistry
-from tollgate.multiagent.scoped_policy import AgentScopedPolicy
+from charter.core.policy_set import PolicySet
+from charter.decisions import BLOCK
+from charter.linter.linter import lint
+from charter.multiagent.registry import CharterRegistry
+from charter.multiagent.scoped_policy import AgentScopedPolicy
 
 
 def test_dead_policy_detected():
@@ -28,7 +28,7 @@ def test_scoped_policy_without_registry_is_an_error():
 
 def test_scoped_policy_with_registry_is_fine():
     scoped = AgentScopedPolicy(name="x", on_fail=BLOCK, reason="r", allowed_roles=["admin"])
-    registry = TollgateRegistry()
+    registry = CharterRegistry()
     registry.register("agent1", role="admin")
     findings = lint([scoped], registry=registry)
     assert not any(f.severity == "error" for f in findings)
@@ -48,7 +48,7 @@ def test_uncovered_tools_detected():
 
 
 def test_flags_high_action_without_escalate_to():
-    from tollgate.core.reversible import ReversibleAction
+    from charter.core.reversible import ReversibleAction
 
     unrouted = ReversibleAction(do_fn=lambda a: a, undo_fn=None, name="wipe_db", irreversibility_level="high")
     routed = ReversibleAction(

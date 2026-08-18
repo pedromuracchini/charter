@@ -281,6 +281,83 @@ wheels = [
 ]
 
 [[package]]
+name = "charter"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "mcp" },
+    { name = "openai-agents" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+langgraph = [
+    { name = "langchain-core" },
+    { name = "langgraph" },
+]
+mcp = [
+    { name = "mcp" },
+]
+openai-agents = [
+    { name = "openai-agents" },
+]
+otel = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "commitizen" },
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "charter", extras = ["otel", "langgraph", "openai-agents", "mcp"], marker = "extra == 'all'" },
+    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
+    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.1" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.43.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.43.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
+provides-extras = ["otel", "langgraph", "openai-agents", "mcp", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "commitizen", specifier = ">=4" },
+    { name = "hypothesis", specifier = ">=6.100" },
+    { name = "mypy", specifier = ">=2.1.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "ruff", specifier = ">=0.15.20" },
+]
+docs = [
+    { name = "mkdocs", specifier = ">=1.6,<2" },
+    { name = "mkdocs-material", specifier = ">=9.5,<10" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.26" },
+]
+
+[[package]]
 name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2139,83 +2216,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/46/79/cf31d7a93a8fdc6aa0fbb665be84426a8c5a557d9240b6239e9e11e35fc5/termcolor-3.3.0.tar.gz", hash = "sha256:348871ca648ec6a9a983a13ab626c0acce02f515b9e1983332b17af7979521c5", size = 14434, upload-time = "2025-12-29T12:55:21.882Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl", hash = "sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5", size = 7734, upload-time = "2025-12-29T12:55:20.718Z" },
-]
-
-[[package]]
-name = "tollgate"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "langchain-core" },
-    { name = "langgraph" },
-    { name = "mcp" },
-    { name = "openai-agents" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-sdk" },
-]
-langgraph = [
-    { name = "langchain-core" },
-    { name = "langgraph" },
-]
-mcp = [
-    { name = "mcp" },
-]
-openai-agents = [
-    { name = "openai-agents" },
-]
-otel = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-sdk" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "commitizen" },
-    { name = "hypothesis" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-docs = [
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3" },
-    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
-    { name = "openai-agents", marker = "extra == 'openai-agents'", specifier = ">=0.1" },
-    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.43.0" },
-    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.43.0" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "tollgate", extras = ["otel", "langgraph", "openai-agents", "mcp"], marker = "extra == 'all'" },
-]
-provides-extras = ["otel", "langgraph", "openai-agents", "mcp", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "commitizen", specifier = ">=4" },
-    { name = "hypothesis", specifier = ">=6.100" },
-    { name = "mypy", specifier = ">=2.1.0" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "ruff", specifier = ">=0.15.20" },
-]
-docs = [
-    { name = "mkdocs", specifier = ">=1.6,<2" },
-    { name = "mkdocs-material", specifier = ">=9.5,<10" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.26" },
 ]
 
 [[package]]
