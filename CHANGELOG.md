@@ -320,12 +320,21 @@ initial implementation.
   several agents.
 - **MCP adapter** (`charter[mcp]`), guarding `tools/call` on both sides of
   the protocol: `guard_mcp_session` wraps a `ClientSession` (a denial raises
-  `GuardBlocked`), `guard_mcp_server` wraps a `FastMCP`/low-level `Server` (a
-  denial returns `CallToolResult(isError=True)`, since an exception escaping a
-  request handler would tear down the connection for every later request).
-  Auto-detected by `interceptor.use()`/`charter.wrap()`. New example
+  `GuardBlocked`), `guard_mcp_server` wraps the server's registered
+  `tools/call` handler (a denial returns `CallToolResult(isError=True)`, since
+  an exception escaping a request handler would tear down the connection for
+  every later request). Auto-detected by
+  `interceptor.use()`/`charter.wrap()`. New example
   `examples/mcp_integration.py` and tests against real MCP objects over an
   in-memory transport.
+  **Both mcp 1.x and 2.x are supported**, detected from the installed package
+  rather than configured: 2.0 renamed `FastMCP` to `MCPServer`, moved the
+  low-level handle to `_lowlevel_server`, replaced the request-type-keyed
+  handler table with a method-keyed one behind
+  `get_request_handler`/`add_request_handler`, changed the handler contract to
+  `(ctx, params) -> CallToolResult`, and renamed the result flag to
+  `is_error`. `guard_mcp_session` also accepts 2.x's `Client` facade and
+  guards the session underneath it.
 - **Escalation metrics**, which did not exist at all: `charter.escalations_total`
   (attributed with `outcome` — `approved` / `denied` / `not_resolved` — plus
   policy, tool and `escalate_to`) and `charter.escalation_latency_ms`. An
