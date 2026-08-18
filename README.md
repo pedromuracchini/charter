@@ -241,8 +241,13 @@ charter.wrap(client_session, interceptor)
 
 # Server side — the policy holds whoever connects. A denial returns
 # CallToolResult(isError=True), because raising would kill the connection.
-charter.wrap(fastmcp_server, interceptor)
+charter.wrap(mcp_server, interceptor)
 ```
+
+Works with mcp 1.x and 2.x alike — the adapter detects which registration API
+the installed package exposes, so `MCPServer` (2.x), `FastMCP` (1.x) and a
+low-level `Server` are all accepted, as is 2.x's `Client` facade on the client
+side.
 
 Requires the matching extra (`charter[langgraph]` / `charter[openai-agents]` /
 `charter[mcp]`). Run `uv run python examples/langgraph_integration.py`,
