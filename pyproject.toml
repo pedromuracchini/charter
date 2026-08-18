@@ -60,7 +60,13 @@ openai-agents = [
     "openai-agents>=0.1",
 ]
 mcp = [
-    "mcp>=1.2",
+    # Capped below 2.0 deliberately. mcp 2.x renames `FastMCP` to `MCPServer`,
+    # moves the low-level handle from `_mcp_server` to `_lowlevel_server`, and
+    # replaces the `request_handlers[CallToolRequest]` table with a
+    # method-keyed one behind `get_request_handler`/`add_request_handler` —
+    # every internal `adapters/mcp.py:guard_mcp_server` reaches for. Until the
+    # adapter speaks both, an uncapped range hands users a broken extra.
+    "mcp>=1.2,<2",
 ]
 # Everything at once, for `pip install charter[all]`. Kept as a recursive
 # reference rather than a duplicated dependency list so it cannot drift out of
