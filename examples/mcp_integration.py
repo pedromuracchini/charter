@@ -21,19 +21,41 @@ from __future__ import annotations
 import asyncio
 
 from mcp import ClientSession  # noqa: F401  (documents the client type being guarded)
-from mcp.server.fastmcp import FastMCP
-from mcp.shared.memory import create_connected_server_and_client_session
 
 import charter
 from charter import ESCALATE, CharterInterceptor, GuardBlocked, PolicySet
 from charter.policies import path_within
 
+# mcp 2.0 renamed the server class and replaced the in-memory test helper.
+# Charter's adapter handles either generation; this example picks whichever is
+# installed so it runs against both.
+try:  # mcp >= 2
+    from contextlib import asynccontextmanager
+
+    from mcp.client import Client
+    from mcp.server import MCPServer as ServerClass
+
+    @asynccontextmanager
+    async def connected_session(server):
+        async with Client(server) as client:
+            yield client.session
+
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as ServerClass
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    @asynccontextmanager
+    async def connected_session(server):
+        async with create_connected_server_and_client_session(server._mcp_server) as session:
+            yield session
+
+
 WORKSPACE = "/tmp/agent-workspace"
 
 
-def build_server() -> FastMCP:
+def build_server() -> ServerClass:
     """An ordinary MCP server. Nothing here knows Charter exists."""
-    server = FastMCP("files")
+    server = ServerClass("files")
 
     @server.tool()
     def read_file(path: str) -> str:
@@ -68,7 +90,7 @@ async def client_side() -> None:
     interceptor = CharterInterceptor(policies=build_policies(), agent_id="file_agent")
     server = build_server()
 
-    async with create_connected_server_and_client_session(server._mcp_server) as session:
+    async with connected_session(server) as session:
         charter.wrap(session, interceptor)  # auto-detected as an MCP ClientSession
 
         result = await session.call_tool("read_file", {"path": f"{WORKSPACE}/notes.md"})
@@ -88,16 +110,17 @@ async def server_side() -> None:
     print("\n=== server side: guarding whoever connects ===")
     interceptor = CharterInterceptor(policies=build_policies(), agent_id="mcp_server")
     server = build_server()
-    charter.wrap(server, interceptor)  # auto-detected as a FastMCP server
+    charter.wrap(server, interceptor)  # auto-detected as an MCP server
 
-    async with create_connected_server_and_client_session(server._mcp_server) as session:
+    async with connected_session(server) as session:
         for name, args in [
             ("read_file", {"path": f"{WORKSPACE}/notes.md"}),
             ("read_file", {"path": "/etc/passwd"}),
             ("delete_file", {"path": f"{WORKSPACE}/old.log"}),
         ]:
             result = await session.call_tool(name, args)
-            verdict = "error " if result.isError else "ok    "
+            is_error = result.is_error if hasattr(result, "is_error") else result.isError
+            verdict = "error " if is_error else "ok    "
             print(f"  {verdict} {name}({args['path']}) -> {result.content[0].text}")
 
     # The connection survived every denial — that is why the server side
