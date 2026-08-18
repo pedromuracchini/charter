@@ -66,7 +66,7 @@ mcp = [
     # method-keyed one behind `get_request_handler`/`add_request_handler` —
     # every internal `adapters/mcp.py:guard_mcp_server` reaches for. Until the
     # adapter speaks both, an uncapped range hands users a broken extra.
-    "mcp>=1.2,<2",
+    "mcp>=1.2,<3",
 ]
 # Everything at once, for `pip install charter[all]`. Kept as a recursive
 # reference rather than a duplicated dependency list so it cannot drift out of
