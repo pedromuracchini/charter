@@ -1,8 +1,8 @@
-site_name: Charter
+site_name: Chokepoint
 site_description: Deterministic, code-defined guardrails for AI agent tool calls
-site_url: https://pedromuracchini.github.io/charter/
-repo_url: https://github.com/pedromuracchini/charter
-repo_name: pedromuracchini/charter
+site_url: https://pedromuracchini.github.io/chokepoint/
+repo_url: https://github.com/pedromuracchini/chokepoint
+repo_name: pedromuracchini/chokepoint
 # No `edit_uri` / `content.action.edit`: every page under `docs/` is generated
 # by `scripts/build_docs.py` from a source file elsewhere in the repo, so an
 # "edit this page" link would point at a path that does not exist on the
@@ -64,26 +64,26 @@ nav:
   - Architecture: architecture.md
   - Reference:
       - Overview: reference/index.md
-      - Package API: reference/charter.md
+      - Package API: reference/chokepoint.md
       - Core:
-          - GuardContext: reference/charter/core/context.md
-          - guard: reference/charter/core/decorator.md
-          - CharterInterceptor: reference/charter/core/interceptor.md
-          - Policy and PolicySet: reference/charter/core/policy_set.md
-          - ReversibleAction: reference/charter/core/reversible.md
-          - Escalation interface: reference/charter/core/escalation.md
-          - Decisions: reference/charter/decisions.md
-          - CallState: reference/charter/state.md
-          - Redaction: reference/charter/redaction.md
-      - Policy library: reference/charter/policies.md
-      - Escalation handlers: reference/charter/escalation.md
-      - Framework adapters: reference/charter/adapters.md
-      - Multi-agent: reference/charter/multiagent.md
-      - Ledger: reference/charter/ledger.md
-      - Reports: reference/charter/report.md
-      - Linter: reference/charter/linter.md
-      - OpenTelemetry: reference/charter/otel.md
-      - Testing utilities: reference/charter/testing.md
+          - GuardContext: reference/chokepoint/core/context.md
+          - guard: reference/chokepoint/core/decorator.md
+          - ChokepointInterceptor: reference/chokepoint/core/interceptor.md
+          - Policy and PolicySet: reference/chokepoint/core/policy_set.md
+          - ReversibleAction: reference/chokepoint/core/reversible.md
+          - Escalation interface: reference/chokepoint/core/escalation.md
+          - Decisions: reference/chokepoint/decisions.md
+          - CallState: reference/chokepoint/state.md
+          - Redaction: reference/chokepoint/redaction.md
+      - Policy library: reference/chokepoint/policies.md
+      - Escalation handlers: reference/chokepoint/escalation.md
+      - Framework adapters: reference/chokepoint/adapters.md
+      - Multi-agent: reference/chokepoint/multiagent.md
+      - Ledger: reference/chokepoint/ledger.md
+      - Reports: reference/chokepoint/report.md
+      - Linter: reference/chokepoint/linter.md
+      - OpenTelemetry: reference/chokepoint/otel.md
+      - Testing utilities: reference/chokepoint/testing.md
   - Contributing: contributing.md
   - Security: security.md
   - Changelog: changelog.md

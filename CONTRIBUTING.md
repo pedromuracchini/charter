@@ -1,4 +1,4 @@
-# Contributing to Charter
+# Contributing to Chokepoint
 
 This project ships a [Code of Conduct](CODE_OF_CONDUCT.md) (Contributor
 Covenant 2.1). Participating here — issues, pull requests, discussions — means
@@ -19,18 +19,18 @@ uv sync --extra all
 CI also runs the suite with **no extras at all**, because the graceful
 degradation paths (`otel/config.py` falling back to no-ops, the adapters
 skipping their optional imports) are load-bearing behavior. If a change makes
-`import charter` require an optional dependency, that job is what catches it.
+`import chokepoint` require an optional dependency, that job is what catches it.
 
 ## Running checks
 
 ```bash
 uv run pytest -q                                          # tests
-uv run pytest --cov=charter --cov-report=term-missing     # tests with coverage
+uv run pytest --cov=chokepoint --cov-report=term-missing     # tests with coverage
 uv run pytest tests/core/test_reversible.py::test_permanent_blocks -q  # a single test
 uv run ruff check .                                        # lint
 uv run ruff check --fix .                                  # autofix
 uv run ruff format .                                       # format
-uv run mypy src/charter                                   # strict type check
+uv run mypy src/chokepoint                                   # strict type check
 ```
 
 `ruff check`, `mypy` and `pytest` must pass before a PR is merged; CI runs them
@@ -86,9 +86,9 @@ up front.
    `contextvars`, the `Policy` interface, multi-agent identity model, and
    what's deliberately deferred) and the reasoning behind non-obvious design
    choices. Most changes to core behavior belong in `_engine.py`, not in the
-   `@guard`/`CharterInterceptor` call-sites that funnel through it.
+   `@guard`/`ChokepointInterceptor` call-sites that funnel through it.
 2. Add tests alongside the change — the test tree under `tests/` mirrors
-   `src/charter/`'s package structure.
+   `src/chokepoint/`'s package structure.
 3. Update `CLAUDE.md` if the change affects architecture, and `CHANGELOG.md`
    under an `## [Unreleased]` section.
 4. Keep `ruff`/`mypy --strict` clean; both are treated as build failures.

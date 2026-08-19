@@ -1,11 +1,11 @@
 import pytest
 
-from charter.adapters import register_default_adapters
-from charter.adapters.base import reset_adapters
-from charter.core.escalation import reset_handlers
-from charter.ledger.ledger import ActionLedger
-from charter.otel.config import reset_otel
-from charter.redaction import reset_redaction
+from chokepoint.adapters import register_default_adapters
+from chokepoint.adapters.base import reset_adapters
+from chokepoint.core.escalation import reset_handlers
+from chokepoint.ledger.ledger import ActionLedger
+from chokepoint.otel.config import reset_otel
+from chokepoint.redaction import reset_redaction
 
 
 def _reset_all() -> None:

@@ -1,9 +1,9 @@
 import pytest
 
-from charter._scope import ExecutionScope
-from charter.core.context import GuardContext
-from charter.core.policy_set import PolicySet
-from charter.decisions import ALLOW, BLOCK, ESCALATE
+from chokepoint._scope import ExecutionScope
+from chokepoint.core.context import GuardContext
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import ALLOW, BLOCK, ESCALATE
 
 
 def _ctx():

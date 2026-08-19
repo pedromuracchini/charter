@@ -4,15 +4,15 @@ import json
 
 import pytest
 
-from charter.cli.main import _cmd_repl, _load_ledger_events, main
-from charter.core.interceptor import CharterInterceptor
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK, GuardBlocked
-from charter.ledger.event import LedgerEvent
-from charter.ledger.ledger import ActionLedger
+from chokepoint.cli.main import _cmd_repl, _load_ledger_events, main
+from chokepoint.core.interceptor import ChokepointInterceptor
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK, GuardBlocked
+from chokepoint.ledger.event import LedgerEvent
+from chokepoint.ledger.ledger import ActionLedger
 
 AGENT_MODULE = """
-from charter import PolicySet, BLOCK
+from chokepoint import PolicySet, BLOCK
 
 policy = PolicySet("smoke_policy")
 policy.require(lambda ctx: ctx.args.get("x", 0) > 0, on_fail=BLOCK, reason="x must be positive")
@@ -54,7 +54,7 @@ def test_lint_reports_uncovered_tools(tmp_path, capsys):
 
 
 def test_replay_without_agent(tmp_path, capsys):
-    from charter.ledger.event import LedgerEvent
+    from chokepoint.ledger.event import LedgerEvent
 
     ActionLedger.current().record(
         LedgerEvent(
@@ -73,12 +73,12 @@ def test_replay_without_agent(tmp_path, capsys):
 
 
 def test_version_flag(capsys):
-    import charter
+    import chokepoint
 
     with pytest.raises(SystemExit) as excinfo:
         main(["--version"])
     assert excinfo.value.code == 0
-    assert charter.__version__ in capsys.readouterr().out
+    assert chokepoint.__version__ in capsys.readouterr().out
 
 
 def test_lint_accepts_agent_as_a_flag(capsys):
@@ -125,7 +125,7 @@ def test_report_json_serializes_policy_stats(capsys):
 def _record_two_events():
     policy = PolicySet("exported")
     policy.require(lambda ctx: ctx.args.get("ok", False), on_fail=BLOCK, reason="not ok")
-    interceptor = CharterInterceptor(policies=[policy], agent_id="exporter")
+    interceptor = ChokepointInterceptor(policies=[policy], agent_id="exporter")
     interceptor.call("t", lambda **kw: None, ok=True)
     with pytest.raises(GuardBlocked):
         interceptor.call("t", lambda **kw: None, ok=False)
@@ -161,7 +161,7 @@ def test_export_fixtures_skips_events_recorded_with_redacted_args(capsys):
     ever replay placeholders — it is emitted skipped rather than dropped."""
     policy = PolicySet("exported")
     policy.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
-    CharterInterceptor(policies=[policy], agent_id="exporter").call(
+    ChokepointInterceptor(policies=[policy], agent_id="exporter").call(
         "login", lambda **kw: None, password="hunter2"
     )
     main(["export", "--format", "fixtures"])
@@ -324,7 +324,7 @@ def test_lint_exits_non_zero_on_an_error_severity_finding(tmp_path, capsys):
     CI gate is the exit code, not the printed text."""
     path = tmp_path / "scoped_agent.py"
     path.write_text(
-        "from charter import AgentScopedPolicy, BLOCK\n"
+        "from chokepoint import AgentScopedPolicy, BLOCK\n"
         "policy = AgentScopedPolicy(\n"
         '    name="scoped", allowed_roles=["executor"], on_fail=BLOCK, reason="r",\n'
         ")\n"
@@ -381,5 +381,5 @@ def test_repl_subcommand_defaults_to_stdin_and_stdout(tmp_path, monkeypatch, cap
     main(["repl", "--agent", _write_agent(tmp_path)])
 
     out = capsys.readouterr().out
-    assert "charter policy REPL" in out
+    assert "chokepoint policy REPL" in out
     assert "decision: ALLOW (no rule fired)" in out

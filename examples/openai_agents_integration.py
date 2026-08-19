@@ -1,5 +1,5 @@
 """Real OpenAI Agents SDK integration: wrap `agents.FunctionTool` objects
-(created via `@function_tool`) with Charter before handing them to an
+(created via `@function_tool`) with Chokepoint before handing them to an
 `Agent`.
 
 This demonstrates the wrapping and the BLOCK/ALLOW behavior directly through
@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from charter import BLOCK, CharterInterceptor, GuardBlocked, PolicySet
+from chokepoint import BLOCK, ChokepointInterceptor, GuardBlocked, PolicySet
 
 
 async def _invoke(tool: object, args: dict) -> object:
@@ -71,7 +71,7 @@ async def main() -> None:
         reason="amount exceeds the auto-approval limit",
     )
 
-    interceptor = CharterInterceptor(policies=[large_transfer_policy])
+    interceptor = ChokepointInterceptor(policies=[large_transfer_policy])
 
     # Build the Agent, then wrap its .tools in place — OpenAIAgentsAdapter is
     # registered by default, so interceptor.use(agent) auto-detects it.
@@ -85,7 +85,7 @@ async def main() -> None:
         print(f"blocked: {exc.decision.reason}")
 
     # search_web has no policy attached, so it's untouched by the guard.
-    print(await _invoke(agent.tools[1], {"query": "charter"}))
+    print(await _invoke(agent.tools[1], {"query": "chokepoint"}))
 
     # To actually run this with a real model:
     #

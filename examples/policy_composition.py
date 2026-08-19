@@ -8,11 +8,11 @@ Run directly:
 
 from __future__ import annotations
 
-from charter import (
+from chokepoint import (
     BLOCK,
     AgentScopedPolicy,
-    CharterInterceptor,
-    CharterRegistry,
+    ChokepointInterceptor,
+    ChokepointRegistry,
     GuardBlocked,
     PolicySet,
 )
@@ -56,7 +56,7 @@ canary_healthy_policy.require(
 rollback_requires_evidence_policy = ~canary_healthy_policy
 
 
-registry = CharterRegistry()
+registry = ChokepointRegistry()
 registry.register("release_bot", role="ci")
 registry.register("oncall_engineer", role="incident_commander")
 
@@ -70,9 +70,9 @@ def rollback(service: str, error_rate: float = 0.0) -> dict:
 
 
 def main() -> None:
-    release_bot = CharterInterceptor(registry=registry, agent_id="release_bot", policies=[deploy_policy])
-    oncall = CharterInterceptor(registry=registry, agent_id="oncall_engineer", policies=[deploy_policy])
-    rollback_interceptor = CharterInterceptor(policies=[rollback_requires_evidence_policy])
+    release_bot = ChokepointInterceptor(registry=registry, agent_id="release_bot", policies=[deploy_policy])
+    oncall = ChokepointInterceptor(registry=registry, agent_id="oncall_engineer", policies=[deploy_policy])
+    rollback_interceptor = ChokepointInterceptor(policies=[rollback_requires_evidence_policy])
 
     # AND: fails without both tests_passed and approved_by.
     try:

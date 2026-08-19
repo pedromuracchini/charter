@@ -1,8 +1,8 @@
 import pytest
 
-from charter.ledger.event import LedgerEvent
-from charter.redaction import DEFAULT_PLACEHOLDER
-from charter.testing.harness import fixtures_from_events
+from chokepoint.ledger.event import LedgerEvent
+from chokepoint.redaction import DEFAULT_PLACEHOLDER
+from chokepoint.testing.harness import fixtures_from_events
 
 
 def _event(event_id="evt_1", policy="p", tool="t", decision="BLOCK", args=None):

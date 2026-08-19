@@ -1,6 +1,6 @@
 """Real LangGraph integration: wrap plain `langchain_core.tools.BaseTool`
 objects (the type every LangGraph tool is, whether created via `@tool` or
-used through `create_react_agent`/`ToolNode`) with Charter before handing
+used through `create_react_agent`/`ToolNode`) with Chokepoint before handing
 them to LangGraph.
 
 This demonstrates the wrapping and the BLOCK/ALLOW behavior directly through
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 
-from charter import BLOCK, CharterInterceptor, GuardBlocked, PolicySet
+from chokepoint import BLOCK, ChokepointInterceptor, GuardBlocked, PolicySet
 
 
 def main() -> None:
@@ -53,7 +53,7 @@ def main() -> None:
         reason="amount exceeds the auto-approval limit",
     )
 
-    interceptor = CharterInterceptor(policies=[large_transfer_policy])
+    interceptor = ChokepointInterceptor(policies=[large_transfer_policy])
 
     # Wrap the tool list BEFORE handing it to LangGraph. interceptor.use()
     # auto-detects these are BaseTool instances (LangGraphAdapter, registered
@@ -69,7 +69,7 @@ def main() -> None:
         print(f"blocked: {exc.decision.reason}")
 
     # search_web has no policy attached, so it's untouched by the guard.
-    print(asyncio.run(wrapped_tools[1].ainvoke({"query": "charter"})))
+    print(asyncio.run(wrapped_tools[1].ainvoke({"query": "chokepoint"})))
 
     # To actually run this in a LangGraph agent:
     #

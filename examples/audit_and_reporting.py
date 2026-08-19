@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 
-from charter import BLOCK, ActionLedger, CharterInterceptor, GuardBlocked, PolicySet
+from chokepoint import BLOCK, ActionLedger, ChokepointInterceptor, GuardBlocked, PolicySet
 
 policy = PolicySet("large_withdrawal_check")
 policy.require(
@@ -28,7 +28,7 @@ def withdraw(amount: float) -> dict:
 
 def main() -> None:
     ActionLedger.reset()
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     for amount in [100, 2000, 500, 5000, 50]:
         with contextlib.suppress(GuardBlocked):

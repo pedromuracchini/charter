@@ -3,10 +3,10 @@ import inspect
 
 import pytest
 
-from charter.core.decorator import guard
-from charter.core.reversible import ReversibleAction
-from charter.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked
-from charter.ledger.ledger import ActionLedger
+from chokepoint.core.decorator import guard
+from chokepoint.core.reversible import ReversibleAction
+from chokepoint.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked
+from chokepoint.ledger.ledger import ActionLedger
 
 
 def _capturing_guard(seen):

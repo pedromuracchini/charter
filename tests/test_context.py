@@ -1,5 +1,5 @@
-from charter._scope import ExecutionScope
-from charter.core.context import GuardContext
+from chokepoint._scope import ExecutionScope
+from chokepoint.core.context import GuardContext
 
 
 def test_state_checksum_matches_fails_safe_without_provider():

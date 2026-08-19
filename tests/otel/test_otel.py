@@ -1,13 +1,13 @@
 import pytest
 
-from charter._engine import evaluate_call
-from charter._scope import ExecutionScope, current_scope
-from charter.core.context import GuardContext
-from charter.core.policy_set import PolicySet
-from charter.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked, GuardDecision
-from charter.ledger.ledger import ActionLedger
-from charter.otel.config import configure_otel, otel_available, reset_otel
-from charter.otel.spans import evaluate_span, should_sample
+from chokepoint._engine import evaluate_call
+from chokepoint._scope import ExecutionScope, current_scope
+from chokepoint.core.context import GuardContext
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import ALLOW, BLOCK, ESCALATE, GuardBlocked, GuardDecision
+from chokepoint.ledger.ledger import ActionLedger
+from chokepoint.otel.config import configure_otel, otel_available, reset_otel
+from chokepoint.otel.spans import evaluate_span, should_sample
 
 #: Everything below that actually inspects a span or a metric needs the SDK
 #: from the `otel` extra. Skipping says so; the `if not otel_available():
@@ -44,14 +44,14 @@ def test_configured_otel_with_in_memory_exporter_emits_span():
 
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].name == "charter.evaluate"
+    assert spans[0].name == "chokepoint.evaluate"
     reset_otel()
 
 
 @requires_otel
 def test_per_call_tracer_provider_override_works_without_configure_otel():
     """A `tracer_provider` passed directly to `evaluate_span` (as
-    `CharterInterceptor.otel_tracer` does) must emit spans even if the global
+    `ChokepointInterceptor.otel_tracer` does) must emit spans even if the global
     `configure_otel()` was never called."""
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -181,7 +181,7 @@ def _collect(reader):
 
 @requires_otel
 def test_span_carries_the_tool_name_and_marks_a_block_as_an_error():
-    """Without charter.tool you cannot group spans by tool in a backend, and
+    """Without chokepoint.tool you cannot group spans by tool in a backend, and
     without a span status a BLOCK never surfaces in error views."""
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -206,8 +206,8 @@ def test_span_carries_the_tool_name_and_marks_a_block_as_an_error():
         )
 
     span = exporter.get_finished_spans()[0]
-    assert span.attributes["charter.tool"] == "delete_bucket"
-    assert span.attributes["charter.session_id"] == "default"
+    assert span.attributes["chokepoint.tool"] == "delete_bucket"
+    assert span.attributes["chokepoint.session_id"] == "default"
     assert span.status.status_code is StatusCode.ERROR
     reset_otel()
 
@@ -243,7 +243,7 @@ def test_dry_run_block_is_not_marked_as_a_span_error():
 def test_escalation_metrics_are_emitted_with_the_outcome():
     """There was previously no escalation metric at all — the one decision
     that puts a human in the request path was unobservable."""
-    from charter.core.escalation import EscalationHandler, register_handler
+    from chokepoint.core.escalation import EscalationHandler, register_handler
 
     class Approve(EscalationHandler):
         def escalate(self, ctx, rule_result):
@@ -270,12 +270,12 @@ def test_escalation_metrics_are_emitted_with_the_outcome():
     )
 
     collected = _collect(reader)
-    points = collected["charter.escalations_total"]
+    points = collected["chokepoint.escalations_total"]
     assert len(points) == 1
     assert points[0].attributes["outcome"] == "approved"
     assert points[0].attributes["tool"] == "transfer"
     assert points[0].attributes["escalate_to"] == "metrics-scheme://ops"
-    assert collected["charter.escalation_latency_ms"]
+    assert collected["chokepoint.escalation_latency_ms"]
     reset_otel()
 
 
@@ -295,7 +295,7 @@ def test_dry_run_escalation_is_recorded_as_not_resolved():
         scope=current_scope(),
     )
 
-    points = _collect(reader)["charter.escalations_total"]
+    points = _collect(reader)["chokepoint.escalations_total"]
     assert [p.attributes["outcome"] for p in points] == ["not_resolved"]
     reset_otel()
 
@@ -310,7 +310,7 @@ def test_delegation_depth_metric_is_actually_emitted():
     scope = ExecutionScope(caller_agent_id="executor", delegation_chain=("orchestrator", "executor"))
     evaluate_call(tool_name="t", args={}, invoke=lambda: None, policies=[], mode="enforce", scope=scope)
 
-    points = _collect(reader)["charter.delegation_depth"]
+    points = _collect(reader)["chokepoint.delegation_depth"]
     assert len(points) == 1
     assert points[0].attributes["agent"] == "executor"
     assert points[0].sum == 1  # one hop, not two chain entries

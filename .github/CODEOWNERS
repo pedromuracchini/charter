@@ -8,8 +8,8 @@
 # The evaluation engine is the single chokepoint every guarded call runs
 # through, and the security posture is documented policy — both warrant a
 # deliberate look rather than a routine one.
-/src/charter/_engine.py        @pedromuracchini
-/src/charter/core/             @pedromuracchini
+/src/chokepoint/_engine.py        @pedromuracchini
+/src/chokepoint/core/             @pedromuracchini
 /SECURITY.md                    @pedromuracchini
 
 # Release and CI plumbing can publish artifacts under the project's name.

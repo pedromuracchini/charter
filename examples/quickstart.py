@@ -1,4 +1,4 @@
-"""Quickstart: the smallest possible Charter setup — two `@guard`-decorated
+"""Quickstart: the smallest possible Chokepoint setup — two `@guard`-decorated
 tool functions, no multi-agent identity or registry required.
 
 Run directly:
@@ -8,7 +8,7 @@ Run directly:
 
 from __future__ import annotations
 
-from charter import BLOCK, ESCALATE, GuardBlocked, guard
+from chokepoint import BLOCK, ESCALATE, GuardBlocked, guard
 
 
 @guard(

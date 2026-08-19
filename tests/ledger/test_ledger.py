@@ -4,13 +4,13 @@ import threading
 
 import pytest
 
-from charter._engine import evaluate_call
-from charter._scope import current_scope
-from charter.core.interceptor import CharterInterceptor
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK, ESCALATE, GuardBlocked
-from charter.ledger.event import LedgerEvent
-from charter.ledger.ledger import ActionLedger, replay
+from chokepoint._engine import evaluate_call
+from chokepoint._scope import current_scope
+from chokepoint.core.interceptor import ChokepointInterceptor
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK, ESCALATE, GuardBlocked
+from chokepoint.ledger.event import LedgerEvent
+from chokepoint.ledger.ledger import ActionLedger, replay
 
 
 def _event(event_id="evt_1", decision="BLOCK", policy="p", tool="t"):
@@ -261,7 +261,7 @@ def test_a_broken_sink_still_returns_the_tools_result_end_to_end(tmp_path):
     ledger = ActionLedger(sink_path=tmp_path / "missing_dir" / "ledger.jsonl")
     policy = PolicySet("allows")
     policy.require(lambda ctx: True, on_fail=BLOCK, reason="fine")
-    interceptor = CharterInterceptor(policies=[policy], agent_id="a", ledger=ledger)
+    interceptor = ChokepointInterceptor(policies=[policy], agent_id="a", ledger=ledger)
 
     result = interceptor.call("t", lambda **kw: "the result", x=1)
 
