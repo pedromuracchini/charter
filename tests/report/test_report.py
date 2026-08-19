@@ -2,13 +2,13 @@ import json
 
 import pytest
 
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK
-from charter.errors import ConfigurationError
-from charter.ledger.event import LedgerEvent
-from charter.report.graph import delegation_graph, policy_graph
-from charter.report.narrative import narrative
-from charter.report.policy_report import build_report
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK
+from chokepoint.errors import ConfigurationError
+from chokepoint.ledger.event import LedgerEvent
+from chokepoint.report.graph import delegation_graph, policy_graph
+from chokepoint.report.narrative import narrative
+from chokepoint.report.policy_report import build_report
 
 
 def _event(**overrides):
@@ -75,7 +75,7 @@ def test_build_report_coverage_includes_static_by_default():
 
 
 def test_build_report_static_coverage_without_any_events():
-    from charter.multiagent.scoped_policy import AgentScopedPolicy
+    from chokepoint.multiagent.scoped_policy import AgentScopedPolicy
 
     policy = AgentScopedPolicy(
         name="only_admin",

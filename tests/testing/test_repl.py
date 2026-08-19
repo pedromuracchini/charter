@@ -2,9 +2,9 @@ import inspect
 
 import pytest
 
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK
-from charter.testing.repl import evaluate_synthetic, run_repl
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK
+from chokepoint.testing.repl import evaluate_synthetic, run_repl
 
 
 def test_evaluate_synthetic_no_policies_allows():
@@ -50,7 +50,7 @@ def _drive(lines, policies=None):
 
 def test_run_repl_prints_a_banner_and_exits_on_quit():
     printed = _drive(["quit"])
-    assert printed == ["charter policy REPL — type a tool name, or 'quit' to exit."]
+    assert printed == ["chokepoint policy REPL — type a tool name, or 'quit' to exit."]
 
 
 def test_run_repl_evaluates_a_json_line_and_prints_the_decision():
@@ -79,7 +79,7 @@ def test_run_repl_reports_malformed_json_and_keeps_looping():
 
 def test_run_repl_exits_cleanly_on_eof():
     printed = _drive([])
-    assert printed == ["charter policy REPL — type a tool name, or 'quit' to exit."]
+    assert printed == ["chokepoint policy REPL — type a tool name, or 'quit' to exit."]
 
 
 def test_run_repl_exits_cleanly_on_eof_at_the_args_prompt():

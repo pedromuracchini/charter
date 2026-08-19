@@ -4,22 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Charter is a Python framework for expressing AI agent authorization policies as
+Chokepoint is a Python framework for expressing AI agent authorization policies as
 deterministic, code-defined predicates evaluated by the runtime, never by the
 LLM itself. Every guarded tool call is intercepted before execution (pre-hook),
 and optionally after execution (post-hook), against a set of `Policy` objects.
 The core principle: an LLM never sees, interprets, or reasons its way around a
 policy — policies are plain Python, evaluated entirely outside the model's
-context, by a deterministic runtime gate every tool call passes through.
+context, by a deterministic runtime chokepoint every tool call passes through.
 
-Positioning: Charter is the authorization-and-reversibility layer of an agent
+Positioning: Chokepoint is the authorization-and-reversibility layer of an agent
 harness, not a full harness. It doesn't run a plan→act→observe loop, manage
 context/memory, or execute tools itself — it decides *whether* a tool call may
 proceed and *what to do* if it can't (block, escalate, or auto-undo). It's
 framework-agnostic middleware, meant to sit between an agent's tool-calling
 loop (LangGraph, CrewAI, a hand-rolled loop, ...) and the tools themselves.
 
-The package is published as `charter` (`pip install charter`).
+The package is published as `chokepoint` (`pip install chokepoint`).
 
 ## Commands
 
@@ -31,33 +31,33 @@ uv sync                        # no extras — mirrors the CI job that exercises
                                # graceful-degradation paths; run this before claiming
                                # something works without the extras installed
 uv run pytest -q               # run the full test suite (sync + async, via pytest-asyncio)
-uv run pytest --cov=charter --cov-report=term-missing   # with coverage (CI gates at 90%)
+uv run pytest --cov=chokepoint --cov-report=term-missing   # with coverage (CI gates at 90%)
 uv run pytest tests/core/test_reversible.py::test_permanent_blocks -q  # single test
 uv run ruff check .            # lint (line-length=110, py311 target)
 uv run ruff check --fix .      # autofix
 uv run ruff format .           # format (checked in CI)
-uv run mypy src/charter       # strict type check
+uv run mypy src/chokepoint       # strict type check
 uv build                       # build sdist + wheel
 uv run --group docs python scripts/build_docs.py   # assemble docs/ (markdown + API stubs)
 uv run --group docs mkdocs build --strict          # docs must build clean
 uv run python examples/clinical.py        # run the worked example
 uv run python examples/async_tool.py      # run the async worked example
 uv run python examples/real_escalation_handlers.py   # Slack/webhook/CLI escalation handlers
-uv run charter report --agent examples/clinical.py             # CLI: policy report
-uv run charter report --agent examples/clinical.py --format mermaid
-uv run charter lint examples/clinical.py
-uv run charter replay <event_id>
-uv run charter repl --agent examples/clinical.py
+uv run chokepoint report --agent examples/clinical.py             # CLI: policy report
+uv run chokepoint report --agent examples/clinical.py --format mermaid
+uv run chokepoint lint examples/clinical.py
+uv run chokepoint replay <event_id>
+uv run chokepoint repl --agent examples/clinical.py
 ```
 
 ## Architecture
 
 ### The evaluation engine is the single chokepoint — with a sync and an async twin
 
-`src/charter/_engine.py:evaluate_call()` (and its async sibling
+`src/chokepoint/_engine.py:evaluate_call()` (and its async sibling
 `evaluate_call_async()`) is the one place every guarded tool call actually
-runs through. `@guard` (`core/decorator.py`), `CharterInterceptor.call()`,
-and `CharterInterceptor.acall()` (`core/interceptor.py`) are thin call-sites
+runs through. `@guard` (`core/decorator.py`), `ChokepointInterceptor.call()`,
+and `ChokepointInterceptor.acall()` (`core/interceptor.py`) are thin call-sites
 that build a `GuardContext`, gather the right `Policy` list, and hand off to
 one of these two functions — they do not duplicate any
 pre/post/escalate/undo/ledger/OTEL logic themselves. When changing how a
@@ -76,7 +76,7 @@ execute the tool (unless blocked in `enforce` mode) → evaluate post-hook rules
 (a failure here still records the ledger event — see below) → record one
 `LedgerEvent` per hook that had a qualifying decision (always for
 BLOCK/ESCALATE/log-only-ALLOW; sampled for an aggregate "everything passed"
-ALLOW) → emit a `charter.evaluate` OTEL span and metrics alongside it.
+ALLOW) → emit a `chokepoint.evaluate` OTEL span and metrics alongside it.
 
 ### Only `enforce` mode may have side effects beyond recording
 
@@ -130,16 +130,16 @@ never silently disappear from the audit trail:
 
 ### Errors are a hierarchy, and misconfiguration warns rather than only logging
 
-`src/charter/errors.py` defines everything Charter raises on purpose.
-`CharterError` is the root, so one `except` catches the library's failures
+`src/chokepoint/errors.py` defines everything Chokepoint raises on purpose.
+`ChokepointError` is the root, so one `except` catches the library's failures
 without swallowing the caller's own bugs; each subclass *also* inherits the
-stdlib exception it replaced (`ConfigurationError(CharterError, ValueError)`,
+stdlib exception it replaced (`ConfigurationError(ChokepointError, ValueError)`,
 `EscalationError(…, RuntimeError)`, `LedgerEventNotFound(…, KeyError)`,
 `AdapterError(…, TypeError)`), so code written against the old behavior keeps
 working. That dual base is part of the contract, not an implementation detail.
 
 `GuardBlocked` lives in `decisions.py` (it needs `GuardDecision`) but derives
-from `CharterError`. It passes the **decision** to `Exception.__init__`, not
+from `ChokepointError`. It passes the **decision** to `Exception.__init__`, not
 `decision.reason`: `__reduce__` replays `args`, so the old form rebuilt
 `exc.decision` as a `str` on unpickling and made `exc.decision.reason` an
 `AttributeError` — exactly where a guardrail library must not break, since
@@ -163,7 +163,7 @@ async, and it's auto-detected via `inspect.iscoroutinefunction` — there's no
   `evaluate_call_async`) if the wrapped function (or, for a
   `ReversibleAction`, its `do_fn`) is a coroutine function; otherwise today's
   plain sync wrapper. `await` it like you would the original function.
-- `CharterInterceptor.acall(...)` is the async sibling of `.call(...)`.
+- `ChokepointInterceptor.acall(...)` is the async sibling of `.call(...)`.
   `wrap_tool()` (and therefore `.use(agent)`, for agents with mixed sync/async
   tools) auto-detects the same way and returns a matching sync or async
   wrapped callable.
@@ -173,7 +173,7 @@ async, and it's auto-detected via `inspect.iscoroutinefunction` — there's no
 
 ### Tool arguments and interceptor options are separate namespaces
 
-`CharterInterceptor.call()` accepts a tool's arguments as `**kwargs`, but
+`ChokepointInterceptor.call()` accepts a tool's arguments as `**kwargs`, but
 `session_id` and `domain` are parameters of `call()` itself — so a tool
 declaring an argument by either name could never receive it, and the call
 failed with a confusing "missing required argument" from the tool. `domain` is
@@ -211,14 +211,14 @@ downstream checking *worse* than not using the library.
 
 `@guard`-decorated functions keep their normal Python signature (no `ctx`
 parameter), so caller identity / session / domain data has to come from
-somewhere else: `charter._scope.ExecutionScope`, propagated via a
-`contextvars.ContextVar`. `CharterInterceptor.call()` builds a fresh scope per
+somewhere else: `chokepoint._scope.ExecutionScope`, propagated via a
+`contextvars.ContextVar`. `ChokepointInterceptor.call()` builds a fresh scope per
 call (incrementing `step_index`, pulling role/trust/delegation from its
-`CharterRegistry` if configured) and installs it with `use_scope()` for the
+`ChokepointRegistry` if configured) and installs it with `use_scope()` for the
 duration of the call — so a `@guard`-decorated helper invoked *from inside* an
 intercepted tool still sees the same caller identity. Bare `@guard()` usage
 outside any interceptor reads whatever `ExecutionScope` is ambient, which a
-caller can set explicitly via `charter.session(caller_role=..., ...)`.
+caller can set explicitly via `chokepoint.session(caller_role=..., ...)`.
 
 ### Decisions are resolved with explicit precedence, not first-match
 
@@ -238,7 +238,7 @@ Otherwise a call that was authorized, ran, and blew up would skip every
 post-hook *and* the recording step, leaving no trace at all. `"ERROR"` lives
 only on `LedgerEvent.decision` — `Decision`/`GuardDecision` stay
 BLOCK/ESCALATE/ALLOW, because this is not a policy decision. It is never
-sampled, and emits no OTEL span: Charter decided nothing here, and whatever
+sampled, and emits no OTEL span: Chokepoint decided nothing here, and whatever
 instruments the tool owns that part of the trace. Post-hooks are deliberately
 skipped — they have no result to inspect.
 
@@ -295,7 +295,7 @@ tracks whether the call should actually proceed. `EscalationHandler.escalate()`
 may be `def` or `async def` (see "Async", above) — the engine's `timeout_s`
 enforcement applies either way, so implementations don't need to manage their
 own timeout. `core/escalation.py` itself only has the ABC + registry + safe
-default — real implementations live in `charter.escalation` (see below), kept
+default — real implementations live in `chokepoint.escalation` (see below), kept
 separate since they're additive and, unlike the default, do real I/O.
 
 `validate_escalate_to()` is called from `PolicySet.require()`,
@@ -315,11 +315,11 @@ nothing stops an app from swapping a handler while requests are in flight, and
 
 ### Real escalation handlers: Slack, webhook, CLI
 
-`src/charter/escalation/{slack,webhook,cli}.py` — three `EscalationHandler`
+`src/chokepoint/escalation/{slack,webhook,cli}.py` — three `EscalationHandler`
 implementations, each a genuinely different approval-channel shape. All use
 only `urllib.request`/stdlib (no new dependency), are plain `def escalate(...)`
 (sync — verified sufficient under both engines per the confirmed
-`_run_with_timeout*` behavior above), and are exported from `charter/__init__.py`
+`_run_with_timeout*` behavior above), and are exported from `chokepoint/__init__.py`
 directly (safe to import eagerly — zero external dependency, unlike the
 framework adapters). Unlike the framework adapters, these are **not**
 auto-registered — there's no way to "detect" that an agent wants Slack; call
@@ -354,19 +354,19 @@ In multi-agent systems, delegation between agents can silently escalate
 privilege: agent A delegates to agent B, B has access A doesn't, and no policy
 ever explicitly authorized that escalation (the "confused deputy" problem). A
 collection of individually-safe agents doesn't guarantee a collectively-safe
-system. Charter's answer: share the tool, never share an interceptor without
+system. Chokepoint's answer: share the tool, never share an interceptor without
 identity — policies decide based on *who* called, not just *what* was called.
 Two supported patterns:
-- **Pattern 1 (default, most cases):** one `CharterInterceptor` per agent, each
+- **Pattern 1 (default, most cases):** one `ChokepointInterceptor` per agent, each
   constructed with its own `agent_id` and policy list. The exact same tool
   function passed to two interceptors can be BLOCK for one agent and ALLOW for
   another, because `ctx.caller_role` differs — see `examples/clinical.py`.
-- **Pattern 2 (many/dynamic agents):** one shared `CharterRegistry` that
+- **Pattern 2 (many/dynamic agents):** one shared `ChokepointRegistry` that
   multiple interceptors all reference by `agent_id`, instead of duplicating
   role/policy wiring per interceptor.
 - **`delegation_chain` has one convention: register ancestors, read the full
-  path.** `CharterRegistry.register(delegation_chain=...)` takes the agent's
-  *ancestors only*; `CharterInterceptor._self_inclusive_chain()` appends the
+  path.** `ChokepointRegistry.register(delegation_chain=...)` takes the agent's
+  *ancestors only*; `ChokepointInterceptor._self_inclusive_chain()` appends the
   acting `agent_id` when building the `ExecutionScope`, so every
   `GuardContext`, ledger event and graph sees the complete lineage
   (`["orchestrator", "executor_agent"]` — the shape the ledger documents).
@@ -377,14 +377,14 @@ Two supported patterns:
   existing `max_delegation_depth_policy` threshold. A chain that already ends
   with the agent's own id is left alone, so code written against the old
   convention keeps working.
-- **Anti-pattern:** a `CharterInterceptor` with no `agent_id` (or no
+- **Anti-pattern:** a `ChokepointInterceptor` with no `agent_id` (or no
   registry) leaves `ctx.caller_role` always `None`, silently defeating any
-  `AgentScopedPolicy` with `allowed_roles` set. `charter lint` flags this as
+  `AgentScopedPolicy` with `allowed_roles` set. `chokepoint lint` flags this as
   an `error`-severity finding.
 
 ### Redaction happens at record time, never at evaluation time
 
-`src/charter/redaction.py` scrubs secrets and PII on the way *into* durable
+`src/chokepoint/redaction.py` scrubs secrets and PII on the way *into* durable
 storage. The ordering is the whole design:
 
 **evaluate against real values → redact → write.**
@@ -439,9 +439,9 @@ placeholders. `ReplayResult.redacted` flags it and a warning is logged;
 `fixtures_from_events` emits `@pytest.mark.skip` for those events rather than
 generating tests that cannot pass, or dropping them and overstating coverage.
 
-### `charter.policies` — the shipped policy library
+### `chokepoint.policies` — the shipped policy library
 
-`src/charter/policies/` holds tested, versioned implementations of the rules
+`src/chokepoint/policies/` holds tested, versioned implementations of the rules
 every agent re-derives: `no_secrets_in_args`, `no_destructive_sql`,
 `no_destructive_shell`, `path_within`, `domain_allowlist`,
 `rate_limit_policy`, `budget_policy`, `token_budget_policy`,
@@ -472,7 +472,7 @@ still lands in `LedgerEvent.args`).
 
 `rate_limit_policy`/`budget_policy` need memory across calls, which the
 stateless `GuardContext` can't hold — CLAUDE.md previously listed both as
-deferred for exactly that reason. `src/charter/state.py:CallState` resolves
+deferred for exactly that reason. `src/chokepoint/state.py:CallState` resolves
 it without compromising the data model: the counters live in a separate,
 lock-guarded, LRU-bounded object injected into `ExecutionScope` the same way
 `checksum_provider`/`consent_provider` already are, and reached through
@@ -534,16 +534,16 @@ financial control.
 
 `adapters/langgraph.py` and `adapters/openai_agents.py` are real
 implementations (not skeletons), **registered by default** —
-`src/charter/adapters/__init__.py` calls `register_adapter()` for both the
-first time `interceptor.use()`/`charter.wrap()` runs (importing the
-`adapters` package, which happens lazily inside `CharterInterceptor.use()`).
+`src/chokepoint/adapters/__init__.py` calls `register_adapter()` for both the
+first time `interceptor.use()`/`chokepoint.wrap()` runs (importing the
+`adapters` package, which happens lazily inside `ChokepointInterceptor.use()`).
 This is safe without adding hard dependencies: `applies_to()` only *attempts*
 the optional `langchain_core`/`agents` import lazily, inside the method body
-— `import charter` never imports either. Install the extras to use them:
+— `import chokepoint` never imports either. Install the extras to use them:
 `uv sync --extra langgraph` / `--extra openai-agents`.
 
 Both accept `agent` as either a bare `list[Tool]` (wrap *before* constructing
-the graph/agent: `wrapped = charter.wrap(my_tools, interceptor)`) or an
+the graph/agent: `wrapped = chokepoint.wrap(my_tools, interceptor)`) or an
 object with a `.tools: list[Tool]` attribute (wrapped in place) — not every
 possible framework configuration shape (e.g. a `.get_tools()` method), a
 deliberate scoping decision.
@@ -568,10 +568,10 @@ deliberate scoping decision.
   SDK generated. Built via `dataclasses.replace(tool, on_invoke_tool=...)`
   (`FunctionTool` is a dataclass). Only entries with an `on_invoke_tool`
   attribute are wrapped — hosted/built-in tools (`WebSearchTool`,
-  `FileSearchTool`, ...) pass through untouched, since Charter can't
+  `FileSearchTool`, ...) pass through untouched, since Chokepoint can't
   meaningfully guard tool execution it doesn't control. Note: the SDK has its
   own `tool_input_guardrails`/`tool_output_guardrails`/`needs_approval`
-  fields — Charter is complementary (framework-agnostic policy/ledger/audit
+  fields — Chokepoint is complementary (framework-agnostic policy/ledger/audit
   across every framework), not a replacement for those.
 - **MCP** (`mcp.py`): the only adapter that guards *both* ends of a protocol,
   because both are real deployment shapes. `guard_mcp_session` wraps
@@ -602,7 +602,7 @@ deliberate scoping decision.
   server side returns `CallToolResult(isError=True)` — an exception escaping a
   request handler tears down the protocol connection for every *subsequent*
   request, so a single denial would take the server down. Both wrappers mark
-  the object with `__charter_mcp_guarded__` so a second `use()` doesn't stack
+  the object with `__chokepoint_mcp_guarded__` so a second `use()` doesn't stack
   a second evaluation layer (which would double-count against a rate limit).
   Guarding a server with no `tools/call` handler registered yet raises
   explicitly rather than silently guarding nothing — wrap *after* defining
@@ -628,7 +628,7 @@ does (a synthetic `GuardContext` per tool name). A freshly loaded agent module
 with zero calls made still shows correct coverage for any tool a policy
 statically applies to; `block_count`/`escalate_count`/`allow_count` per policy
 remain purely ledger-driven (0 until something actually happens; see below for
-the recency window). Pass `include_static=False` (`charter report
+the recency window). Pass `include_static=False` (`chokepoint report
 --no-static-coverage`) for the old audit-only view: only tools with recorded
 activity count as covered. Static and dynamic *can* still disagree in one
 direction — a `PolicySet` whose `active_when` checks `ctx.domain` only counts
@@ -641,31 +641,31 @@ Per-policy `block_count`/`escalate_count`/`allow_count` are windowed —
 resulting `PolicyReport.window_hours` is echoed back so consumers know what
 window a given report used.
 
-### `src/charter/testing/` ships to users — it is not this repo's test suite
+### `src/chokepoint/testing/` ships to users — it is not this repo's test suite
 
-`src/charter/testing/harness.py` (`fixtures_from_events`, used by
-`ActionLedger.export_fixtures()`) and `src/charter/testing/repl.py`
-(`evaluate_synthetic`, used by `charter repl`) are **library code**: testing
-*utilities* the framework exposes to people building on top of Charter, the
+`src/chokepoint/testing/harness.py` (`fixtures_from_events`, used by
+`ActionLedger.export_fixtures()`) and `src/chokepoint/testing/repl.py`
+(`evaluate_synthetic`, used by `chokepoint repl`) are **library code**: testing
+*utilities* the framework exposes to people building on top of Chokepoint, the
 same way `pytest` ships fixtures or Django ships `django.test`. They install
-with the package and are part of the public API surface. Charter's own
+with the package and are part of the public API surface. Chokepoint's own
 tests, which exercise this repo's code, live under `/tests` at the repo root
 and are excluded from the built package (see `pyproject.toml` / `uv build`).
-Don't confuse the two: `src/charter/testing/` is not misplaced, and moving it
+Don't confuse the two: `src/chokepoint/testing/` is not misplaced, and moving it
 into `/tests` would remove it from every installed copy of the library.
 
 ### The CLI's module-loading convention
 
-`charter report` / `lint` / `repl` load the target file as a plain Python
+`chokepoint report` / `lint` / `repl` load the target file as a plain Python
 module (`importlib.util`) and look for two conventional module-level names:
 `POLICIES: list[Policy]` (required) and, optionally, `REGISTRY:
-CharterRegistry` / `TOOL_NAMES: list[str]` / `ACTIONS: list[ReversibleAction]`
+ChokepointRegistry` / `TOOL_NAMES: list[str]` / `ACTIONS: list[ReversibleAction]`
 (the last one only feeds `lint`'s `"high"`-without-`escalate_to` check). This is not enforced by any base
 class — it's just what `cli/main.py` greps for. See `examples/clinical.py` for
-the convention in practice. `charter report --ledger path.jsonl` merges
+the convention in practice. `chokepoint report --ledger path.jsonl` merges
 events from a JSONL ledger sink file (written via
 `ActionLedger.configure(sink_path=...)`) with whatever's in the current
-process's in-memory ledger. `charter export` reaches the same file for the
+process's in-memory ledger. `chokepoint export` reaches the same file for the
 non-graph formats (`json`/`csv`/`narrative`/`fixtures`).
 
 Both CI gates exit non-zero: `lint` on an `error`-severity finding, and
@@ -679,7 +679,7 @@ positional argument.
 its lazy singleton with *no arguments* — so constructing
 `ActionLedger(sink_path=...)` yourself produces an object nothing ever
 consults. `ActionLedger.configure(sink_path=..., max_events=...)` (exported as
-`charter.configure_ledger`) is the only supported way to set the sink for the
+`chokepoint.configure_ledger`) is the only supported way to set the sink for the
 ledger the engine actually uses. Call it once at startup, before the first
 guarded call; events already recorded stay with the old ledger and are not
 migrated. Singleton creation and replacement are both guarded by
@@ -711,23 +711,23 @@ authorized tool that raises is still an audit event".
 
 ## Scope: what's implemented vs. deferred
 
-Implemented: a typed error/warning hierarchy (`charter.errors`), `@guard`
+Implemented: a typed error/warning hierarchy (`chokepoint.errors`), `@guard`
 (sync and async, auto-detected, signature-preserving and `ParamSpec`-typed),
 `PolicySet`/
 `AndPolicy`/`OrPolicy`/`NotPolicy`, `ReversibleAction` (sync or async
-`do_fn`/`undo_fn`), `GuardContext`, `CharterInterceptor`
+`do_fn`/`undo_fn`), `GuardContext`, `ChokepointInterceptor`
 (enforce/dry_run/observe, sync `.call()` and async `.acall()`, explicit
 `args={...}`, per-interceptor `otel_tracer`/`ledger`/`redactor` overrides,
 bounded session-counter memory via
 `max_sessions`), `ActionLedger` (JSON/CSV export, DOT/Mermaid/JSON policy +
 delegation graphs, natural-language narrative export, replay, bounded
 in-memory ring buffer via `max_events` with lossless `sink_path` mirroring),
-`CharterRegistry` / `AgentScopedPolicy` / delegation helpers, OTEL spans +
+`ChokepointRegistry` / `AgentScopedPolicy` / delegation helpers, OTEL spans +
 per-event counters/histograms (`otel/config.py` degrades to no-ops without
 `opentelemetry` installed or a reachable tracer/meter provider), a policy
 linter (dead policies, duplicate names, the scoped-policy-without-registry
 anti-pattern, uncovered tools), a ledger-driven pytest fixture generator, a
-minimal synthetic-context REPL, and the `charter` CLI
+minimal synthetic-context REPL, and the `chokepoint` CLI
 (`report`/`lint`/`replay`/`repl`/`export`). Compliance/audit data is
 exportable as JSON, CSV, DOT, Mermaid, and a natural-language narrative —
 deliberately not as PDF; those formats cover the "get this data out in a
@@ -738,7 +738,7 @@ and `EscalationHandler.escalate` all fail closed on an exception rather than
 crashing the guarded call or losing the ledger entry (see "A policy predicate
 ... can never crash the call it's guarding", above); `RuleResult.timeout_s` on
 escalation is actually enforced, not advisory. Real `EscalationHandler`
-implementations ship under `charter.escalation`: `SlackEscalationHandler`,
+implementations ship under `chokepoint.escalation`: `SlackEscalationHandler`,
 `WebhookEscalationHandler`, `CLIEscalationHandler` (see "Real escalation
 handlers", below) — plus the LangGraph and OpenAI Agents SDK framework
 adapters (see "Real framework adapters", above).
@@ -749,7 +749,7 @@ running lint + `ruff format --check` + mypy + the test suite across Python
 3.11–3.14 on Linux, macOS and Windows, **plus a dedicated job with no extras
 installed**. That last one is load-bearing: every graceful-degradation branch
 (OTEL absent, each adapter's `ImportError` path) is unreachable in a job that
-installs the extras, and `pip install charter` with nothing else is the
+installs the extras, and `pip install chokepoint` with nothing else is the
 default way people get this library. Coverage is gated, `uv sync --locked`
 makes lockfile drift fail, wheels are installed into a clean venv and
 smoke-tested before release, releases are SHA-pinned and publish PEP 740
@@ -794,7 +794,7 @@ Deferred or intentionally out of scope:
   see `CallState`.)
 - **A pluggable `LedgerSink` protocol** — `sink_path` writes JSONL to a local
   file, and a Kafka/S3/database sink would need an interface the ledger does
-  not yet have. `CharterInterceptor(ledger=...)` covers the multi-tenant case
+  not yet have. `ChokepointInterceptor(ledger=...)` covers the multi-tenant case
   that motivated most of the requests; forwarding off-box is currently a job
   for whatever tails the JSONL.
 - **Frozen `GuardContext`** — the engine assigns `ctx.result` between the pre
@@ -810,7 +810,7 @@ Deferred or intentionally out of scope:
   `GenericAdapter` handle it. LangChain needs no adapter of its own — the
   `LangGraphAdapter` wraps `langchain_core.tools.BaseTool`, which is exactly
   what LangChain uses. For the rest, `interceptor.use(agent)` /
-  `charter.wrap(agent, interceptor)` falls back to `GenericAdapter` (a plain
+  `chokepoint.wrap(agent, interceptor)` falls back to `GenericAdapter` (a plain
   `agent.tools` dict/iterable-of-pairs, or a bare callable agent), or call
   `interceptor.wrap_tool()` per tool.
 - **TypeScript implementation** — this project is Python-only.

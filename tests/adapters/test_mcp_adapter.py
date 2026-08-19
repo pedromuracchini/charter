@@ -18,12 +18,12 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from charter import CharterInterceptor, wrap
-from charter.adapters.mcp import guard_mcp_server, guard_mcp_session
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK, GuardBlocked
-from charter.errors import ConfigurationError
-from charter.ledger.ledger import ActionLedger
+from chokepoint import ChokepointInterceptor, wrap
+from chokepoint.adapters.mcp import guard_mcp_server, guard_mcp_session
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK, GuardBlocked
+from chokepoint.errors import ConfigurationError
+from chokepoint.ledger.ledger import ActionLedger
 
 try:  # mcp >= 2
     from mcp.client import Client
@@ -77,7 +77,7 @@ def _blocks_deletes() -> PolicySet:
 
 
 async def test_client_side_block_raises_and_never_reaches_the_server():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
 
     async with _session(_server()) as session:
         guard_mcp_session(session, interceptor)
@@ -97,7 +97,7 @@ async def test_client_side_records_the_tool_arguments_for_policies():
         on_fail=BLOCK,
         reason="capture",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     async with _session(_server()) as session:
         guard_mcp_session(session, interceptor)
@@ -107,7 +107,7 @@ async def test_client_side_records_the_tool_arguments_for_policies():
 
 
 async def test_client_side_writes_a_ledger_event():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
 
     async with _session(_server()) as session:
         guard_mcp_session(session, interceptor)
@@ -125,7 +125,7 @@ async def test_wrapping_a_session_twice_does_not_double_evaluate():
     calls = []
     policy = PolicySet("count")
     policy.require(lambda ctx: calls.append(ctx.tool_name) is None, on_fail=BLOCK, reason="count")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     async with _session(_server()) as session:
         guard_mcp_session(session, interceptor)
@@ -136,7 +136,7 @@ async def test_wrapping_a_session_twice_does_not_double_evaluate():
 
 
 async def test_use_auto_detects_a_client_session():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
 
     async with _session(_server()) as session:
         assert wrap(session, interceptor) is session
@@ -148,7 +148,7 @@ async def test_use_auto_detects_a_client_session():
 async def test_wrapping_the_client_facade_guards_its_own_call_tool():
     """`Client.call_tool` delegates to the session on every call, so guarding
     the session underneath covers the facade the 2.x docs hand you."""
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
 
     async with Client(_server()) as client:
         assert wrap(client, interceptor) is client
@@ -163,7 +163,7 @@ async def test_wrapping_the_client_facade_guards_its_own_call_tool():
 @pytest.mark.skipif(not MCP2, reason="the Client facade is mcp 2.x only")
 async def test_wrapping_an_unconnected_client_is_an_explicit_error():
     with pytest.raises(ConfigurationError, match="no session yet"):
-        wrap(Client(_server()), CharterInterceptor(policies=[]))
+        wrap(Client(_server()), ChokepointInterceptor(policies=[]))
 
 
 # --- server side -----------------------------------------------------------
@@ -172,7 +172,7 @@ async def test_wrapping_an_unconnected_client_is_an_explicit_error():
 async def test_server_side_block_returns_an_error_result_not_an_exception():
     """An exception escaping a request handler would tear down the connection
     for every subsequent request — MCP's own error shape is the right answer."""
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -185,7 +185,7 @@ async def test_server_side_block_returns_an_error_result_not_an_exception():
 
 
 async def test_server_side_allows_a_permitted_tool_through_unchanged():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -198,7 +198,7 @@ async def test_server_side_allows_a_permitted_tool_through_unchanged():
 
 async def test_server_side_survives_a_block_and_keeps_serving():
     """The whole reason not to raise: the next request must still work."""
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -211,7 +211,7 @@ async def test_server_side_survives_a_block_and_keeps_serving():
 
 
 async def test_server_side_records_a_ledger_event():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
     server = _server()
     guard_mcp_server(server, interceptor)
 
@@ -224,7 +224,7 @@ async def test_server_side_records_a_ledger_event():
 
 
 async def test_use_auto_detects_a_server():
-    interceptor = CharterInterceptor(policies=[_blocks_deletes()])
+    interceptor = ChokepointInterceptor(policies=[_blocks_deletes()])
     server = _server()
     assert wrap(server, interceptor) is server
 
@@ -237,7 +237,7 @@ async def test_wrapping_a_server_twice_does_not_double_evaluate():
     calls = []
     policy = PolicySet("count")
     policy.require(lambda ctx: calls.append(ctx.tool_name) is None, on_fail=BLOCK, reason="count")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     server = _server()
     guard_mcp_server(server, interceptor)
     guard_mcp_server(server, interceptor)
@@ -253,7 +253,7 @@ def test_guarding_a_server_with_no_tools_handler_is_an_explicit_error():
 
     bare = Server("no-tools")
     with pytest.raises(ConfigurationError, match="define the server's tools"):
-        guard_mcp_server(bare, CharterInterceptor(policies=[]))
+        guard_mcp_server(bare, ChokepointInterceptor(policies=[]))
 
 
 def test_a_bare_server_is_not_claimed_by_the_adapter():
@@ -261,6 +261,6 @@ def test_a_bare_server_is_not_claimed_by_the_adapter():
     `wrap()` would raise instead of falling through to another adapter."""
     from mcp.server.lowlevel import Server
 
-    from charter.adapters.mcp import MCPAdapter
+    from chokepoint.adapters.mcp import MCPAdapter
 
     assert MCPAdapter().applies_to(Server("no-tools")) is False

@@ -27,8 +27,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Charter version
-      description: "`uv run charter --version`"
+      label: Chokepoint version
+      description: "`uv run chokepoint --version`"
     validations:
       required: true
   - type: input

@@ -7,9 +7,9 @@ agents_sdk = pytest.importorskip("agents")
 from agents import Agent, RunConfig, function_tool  # noqa: E402
 from agents.tool_context import ToolContext  # noqa: E402
 
-from charter import BLOCK, CharterInterceptor, PolicySet  # noqa: E402
-from charter.adapters.openai_agents import OpenAIAgentsAdapter  # noqa: E402
-from charter.decisions import GuardBlocked  # noqa: E402
+from chokepoint import BLOCK, ChokepointInterceptor, PolicySet  # noqa: E402
+from chokepoint.adapters.openai_agents import OpenAIAgentsAdapter  # noqa: E402
+from chokepoint.decisions import GuardBlocked  # noqa: E402
 
 
 @function_tool
@@ -47,7 +47,7 @@ def test_applies_to_false_for_unrelated_object():
 
 
 async def test_install_wraps_bare_list_in_place():
-    interceptor = CharterInterceptor(policies=[_policy()])
+    interceptor = ChokepointInterceptor(policies=[_policy()])
     tools = [add]
 
     result = OpenAIAgentsAdapter().install(tools, interceptor)
@@ -60,7 +60,7 @@ async def test_install_wraps_bare_list_in_place():
 
 
 async def test_install_wraps_agent_tools_in_place():
-    interceptor = CharterInterceptor(policies=[_policy()])
+    interceptor = ChokepointInterceptor(policies=[_policy()])
     agent = Agent(name="test", tools=[add])
 
     result = OpenAIAgentsAdapter().install(agent, interceptor)
@@ -72,10 +72,10 @@ async def test_install_wraps_agent_tools_in_place():
 
 
 async def test_use_auto_registers_openai_agents_adapter_without_manual_registration():
-    """OpenAIAgentsAdapter is registered by default via `charter.adapters`
-    (imported the first time `interceptor.use()`/`charter.wrap()` runs) — no
+    """OpenAIAgentsAdapter is registered by default via `chokepoint.adapters`
+    (imported the first time `interceptor.use()`/`chokepoint.wrap()` runs) — no
     explicit `register_adapter()` call should be required."""
-    interceptor = CharterInterceptor(policies=[_policy()])
+    interceptor = ChokepointInterceptor(policies=[_policy()])
     tools = [add]
 
     wrapped = interceptor.use(tools)

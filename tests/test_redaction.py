@@ -1,4 +1,4 @@
-"""Secrets and PII must not survive into anything Charter persists or sends."""
+"""Secrets and PII must not survive into anything Chokepoint persists or sends."""
 
 import copy
 import time
@@ -8,11 +8,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from charter.core.interceptor import CharterInterceptor
-from charter.core.policy_set import PolicySet
-from charter.decisions import BLOCK, GuardBlocked
-from charter.ledger.ledger import ActionLedger
-from charter.redaction import (
+from chokepoint.core.interceptor import ChokepointInterceptor
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import BLOCK, GuardBlocked
+from chokepoint.ledger.ledger import ActionLedger
+from chokepoint.redaction import (
     DEFAULT_PLACEHOLDER,
     DEFAULT_SENSITIVE_KEYS,
     SECRET_PATTERNS,
@@ -43,7 +43,7 @@ def _last_event():
 
 def test_secrets_are_redacted_by_default():
     """A credential in the ledger has no upside — this is on out of the box."""
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body=f"authorization: {AWS_KEY}")
 
     recorded = _last_event().args["body"]
@@ -55,14 +55,14 @@ def test_secrets_are_redacted_by_default():
 
 def test_pii_is_not_redacted_by_default():
     """Emails are routinely the point of the call — opting in is deliberate."""
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("send", _noop, to="alice@example.com")
     assert _last_event().args["to"] == "alice@example.com"
 
 
 def test_pii_is_redacted_when_enabled():
     configure_redaction(include_pii=True)
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("send", _noop, to="alice@example.com", note="ssn 123-45-6789")
 
     event = _last_event()
@@ -72,7 +72,7 @@ def test_pii_is_redacted_when_enabled():
 
 def test_redaction_can_be_turned_off_entirely():
     configure_redaction(enabled=False)
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body=AWS_KEY)
     assert _last_event().args["body"] == AWS_KEY
 
@@ -96,7 +96,7 @@ def test_policies_evaluate_against_unredacted_arguments():
         on_fail=BLOCK,
         reason="inspect",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     interceptor.call("post", _noop, body=AWS_KEY)
 
     assert seen["body"] == AWS_KEY  # predicate saw the real value
@@ -104,9 +104,9 @@ def test_policies_evaluate_against_unredacted_arguments():
 
 
 def test_the_secret_detecting_policy_still_blocks_with_redaction_on():
-    from charter.policies import no_secrets_in_args
+    from chokepoint.policies import no_secrets_in_args
 
-    interceptor = CharterInterceptor(policies=[no_secrets_in_args()])
+    interceptor = ChokepointInterceptor(policies=[no_secrets_in_args()])
     with pytest.raises(GuardBlocked, match="credential"):
         interceptor.call("post", _noop, body=AWS_KEY)
 
@@ -121,14 +121,14 @@ def test_the_jsonl_sink_never_receives_the_raw_secret(tmp_path):
     sink = tmp_path / "ledger.jsonl"
     ActionLedger.configure(sink_path=sink)
 
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body=ANTHROPIC_KEY)
 
     assert ANTHROPIC_KEY not in sink.read_text(encoding="utf-8")
 
 
 def test_exports_never_contain_the_raw_secret():
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body=AWS_KEY)
 
     ledger = ActionLedger.current()
@@ -145,7 +145,7 @@ def test_a_reason_carrying_an_argument_value_is_redacted():
         on_fail=BLOCK,
         reason="check",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     with pytest.raises(GuardBlocked):
         interceptor.call("post", _noop, body=AWS_KEY)
 
@@ -157,7 +157,7 @@ def test_a_raising_tool_does_not_leak_its_arguments():
     def boom(**kwargs):
         raise ValueError(f"bad token {AWS_KEY}")
 
-    interceptor = CharterInterceptor(policies=[])
+    interceptor = ChokepointInterceptor(policies=[])
     with pytest.raises(ValueError):
         interceptor.call("post", boom, body="x")
 
@@ -172,7 +172,7 @@ def test_contributing_rule_reasons_are_redacted():
     policy.require(lambda ctx: False, on_fail=BLOCK, reason=f"saw {AWS_KEY}")
     policy.require(lambda ctx: False, on_fail=BLOCK, reason="second failure")
 
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     with pytest.raises(GuardBlocked):
         interceptor.call("post", _noop, body="x")
 
@@ -183,11 +183,11 @@ def test_contributing_rule_reasons_are_redacted():
 
 
 def test_the_escalation_summary_is_redacted():
-    """Slack is the least controlled destination Charter writes to."""
-    from charter._scope import ExecutionScope
-    from charter.core.context import GuardContext
-    from charter.decisions import ESCALATE, RuleResult
-    from charter.escalation._message import format_escalation_summary
+    """Slack is the least controlled destination Chokepoint writes to."""
+    from chokepoint._scope import ExecutionScope
+    from chokepoint.core.context import GuardContext
+    from chokepoint.decisions import ESCALATE, RuleResult
+    from chokepoint.escalation._message import format_escalation_summary
 
     ctx = GuardContext.build(tool_name="transfer", args={"key": AWS_KEY}, scope=ExecutionScope())
     summary = format_escalation_summary(
@@ -200,10 +200,10 @@ def test_the_escalation_summary_is_redacted():
 def test_the_escalation_summary_is_truncated():
     """Slack rejects a message over 40k outright, so a large payload would
     turn every escalation on that tool into a silent delivery failure."""
-    from charter._scope import ExecutionScope
-    from charter.core.context import GuardContext
-    from charter.decisions import ESCALATE, RuleResult
-    from charter.escalation._message import MAX_ARGS_CHARS, format_escalation_summary
+    from chokepoint._scope import ExecutionScope
+    from chokepoint.core.context import GuardContext
+    from chokepoint.decisions import ESCALATE, RuleResult
+    from chokepoint.escalation._message import MAX_ARGS_CHARS, format_escalation_summary
 
     ctx = GuardContext.build(tool_name="upload", args={"blob": "x" * 50_000}, scope=ExecutionScope())
     summary = format_escalation_summary(
@@ -362,7 +362,7 @@ def test_a_custom_redactor_can_be_installed():
             return "SCRUBBED"
 
     configure_redaction(redactor=Upper())
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body="anything")
     assert _last_event().args == {"body": "SCRUBBED"}
 
@@ -402,9 +402,9 @@ def test_contains_placeholder_walks_dict_keys():
 
 
 def test_replay_flags_a_redacted_event():
-    from charter.ledger.ledger import replay
+    from chokepoint.ledger.ledger import replay
 
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body=AWS_KEY)
 
     result = replay(_last_event().event_id)
@@ -412,9 +412,9 @@ def test_replay_flags_a_redacted_event():
 
 
 def test_replay_of_a_clean_event_is_not_flagged():
-    from charter.ledger.ledger import replay
+    from chokepoint.ledger.ledger import replay
 
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("post", _noop, body="nothing sensitive")
 
     assert replay(_last_event().event_id).redacted is False
@@ -423,9 +423,9 @@ def test_replay_of_a_clean_event_is_not_flagged():
 def test_generated_fixtures_skip_redacted_events():
     """A test replaying placeholders could never pass; dropping it silently
     would overstate coverage instead."""
-    from charter.testing.harness import fixtures_from_events
+    from chokepoint.testing.harness import fixtures_from_events
 
-    interceptor = CharterInterceptor(policies=[_always_allows()])
+    interceptor = ChokepointInterceptor(policies=[_always_allows()])
     interceptor.call("clean", _noop, body="fine")
     interceptor.call("dirty", _noop, body=AWS_KEY)
 

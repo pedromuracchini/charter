@@ -34,7 +34,7 @@ jobs:
       - name: ruff
         run: uv run --python ${{ matrix.python-version }} ruff check .
       - name: mypy
-        run: uv run --python ${{ matrix.python-version }} mypy src/charter
+        run: uv run --python ${{ matrix.python-version }} mypy src/chokepoint
       - name: pytest
         run: uv run --python ${{ matrix.python-version }} pytest -q
 
@@ -69,8 +69,8 @@ jobs:
           set -euo pipefail
           uv venv /tmp/smoke
           VIRTUAL_ENV=/tmp/smoke uv pip install dist/*.whl
-          /tmp/smoke/bin/python -c "import charter; print(charter.__version__)"
-          /tmp/smoke/bin/charter --version
+          /tmp/smoke/bin/python -c "import chokepoint; print(chokepoint.__version__)"
+          /tmp/smoke/bin/chokepoint --version
       - name: Extract the release notes from CHANGELOG.md
         # `--generate-notes` produces a raw commit list, which is a worse
         # changelog than the one this project already hand-writes and enforces

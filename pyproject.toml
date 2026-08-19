@@ -1,6 +1,6 @@
 [project]
-name = "charter"
-version = "0.2.0"
+name = "chokepoint"
+version = "0.3.0"
 description = "Deterministic, code-defined guardrails for AI agent tool calls"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,13 +39,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pedromuracchini/charter"
-Repository = "https://github.com/pedromuracchini/charter"
-Issues = "https://github.com/pedromuracchini/charter/issues"
-Changelog = "https://github.com/pedromuracchini/charter/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/pedromuracchini/chokepoint"
+Repository = "https://github.com/pedromuracchini/chokepoint"
+Issues = "https://github.com/pedromuracchini/chokepoint/issues"
+Changelog = "https://github.com/pedromuracchini/chokepoint/blob/main/CHANGELOG.md"
 
 [project.scripts]
-charter = "charter.cli.main:main"
+chokepoint = "chokepoint.cli.main:main"
 
 [project.optional-dependencies]
 otel = [
@@ -64,11 +64,11 @@ mcp = [
     # registration API the installed server exposes. See its module docstring.
     "mcp>=1.2",
 ]
-# Everything at once, for `pip install charter[all]`. Kept as a recursive
+# Everything at once, for `pip install chokepoint[all]`. Kept as a recursive
 # reference rather than a duplicated dependency list so it cannot drift out of
 # sync with the individual extras above.
 all = [
-    "charter[otel,langgraph,openai-agents,mcp]",
+    "chokepoint[otel,langgraph,openai-agents,mcp]",
 ]
 
 [build-system]
@@ -115,7 +115,7 @@ docstring-code-format = false
 
 [tool.mypy]
 python_version = "3.11"
-packages = ["charter"]
+packages = ["chokepoint"]
 strict = true
 mypy_path = "src"
 
@@ -132,7 +132,7 @@ addopts = "--strict-markers --strict-config"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["charter"]
+source = ["chokepoint"]
 branch = true
 
 [tool.coverage.report]

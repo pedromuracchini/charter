@@ -6,7 +6,7 @@ keeps the published docs from drifting, at the cost of those pages being
 generated rather than edited.
 
 The API reference is generated too, but only as *stubs*: each page is a
-one-line ``::: charter.<module>`` directive that mkdocstrings expands from the
+one-line ``::: chokepoint.<module>`` directive that mkdocstrings expands from the
 real docstrings at build time. Nothing here duplicates prose that lives in the
 source.
 
@@ -45,30 +45,30 @@ PAGES = {
     "CHANGELOG.md": "changelog.md",
 }
 
-REPO = "https://github.com/pedromuracchini/charter/blob/main"
+REPO = "https://github.com/pedromuracchini/chokepoint/blob/main"
 
 #: module -> page title, for the mkdocstrings reference stubs. The `Reference`
 #: nav section in `mkdocs.yml` mirrors this list; keep the two in step.
 REFERENCE_MODULES = [
-    ("charter", "Package API"),
-    ("charter.core.context", "GuardContext"),
-    ("charter.core.decorator", "guard"),
-    ("charter.core.interceptor", "CharterInterceptor"),
-    ("charter.core.policy_set", "Policy and PolicySet"),
-    ("charter.core.reversible", "ReversibleAction"),
-    ("charter.core.escalation", "Escalation interface"),
-    ("charter.decisions", "Decisions"),
-    ("charter.state", "CallState"),
-    ("charter.redaction", "Redaction"),
-    ("charter.policies", "Policy library"),
-    ("charter.escalation", "Escalation handlers"),
-    ("charter.adapters", "Framework adapters"),
-    ("charter.multiagent", "Multi-agent"),
-    ("charter.ledger", "Ledger"),
-    ("charter.report", "Reports"),
-    ("charter.linter", "Linter"),
-    ("charter.otel", "OpenTelemetry"),
-    ("charter.testing", "Testing utilities"),
+    ("chokepoint", "Package API"),
+    ("chokepoint.core.context", "GuardContext"),
+    ("chokepoint.core.decorator", "guard"),
+    ("chokepoint.core.interceptor", "ChokepointInterceptor"),
+    ("chokepoint.core.policy_set", "Policy and PolicySet"),
+    ("chokepoint.core.reversible", "ReversibleAction"),
+    ("chokepoint.core.escalation", "Escalation interface"),
+    ("chokepoint.decisions", "Decisions"),
+    ("chokepoint.state", "CallState"),
+    ("chokepoint.redaction", "Redaction"),
+    ("chokepoint.policies", "Policy library"),
+    ("chokepoint.escalation", "Escalation handlers"),
+    ("chokepoint.adapters", "Framework adapters"),
+    ("chokepoint.multiagent", "Multi-agent"),
+    ("chokepoint.ledger", "Ledger"),
+    ("chokepoint.report", "Reports"),
+    ("chokepoint.linter", "Linter"),
+    ("chokepoint.otel", "OpenTelemetry"),
+    ("chokepoint.testing", "Testing utilities"),
 ]
 
 #: Matches a markdown link target — the `foo.md` in `[text](foo.md)`, with an

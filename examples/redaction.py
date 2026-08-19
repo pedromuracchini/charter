@@ -1,6 +1,6 @@
 """Keeping secrets and PII out of the audit trail.
 
-Charter records `ctx.args` for every decision, and those records reach the
+Chokepoint records `ctx.args` for every decision, and those records reach the
 in-memory ledger, the JSONL file on disk, the JSON/CSV exports, and the
 escalation message posted into a Slack channel. Redaction scrubs all of them
 at once.
@@ -20,12 +20,12 @@ import re
 import tempfile
 from pathlib import Path
 
-import charter
-from charter import BLOCK, CharterInterceptor, GuardBlocked, PolicySet
-from charter.policies import no_secrets_in_args
+import chokepoint
+from chokepoint import BLOCK, ChokepointInterceptor, GuardBlocked, PolicySet
+from chokepoint.policies import no_secrets_in_args
 
 AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
-SINK = Path(tempfile.mkdtemp(prefix="charter-redaction-")) / "ledger.jsonl"
+SINK = Path(tempfile.mkdtemp(prefix="chokepoint-redaction-")) / "ledger.jsonl"
 
 
 def send_email(to: str, body: str, mrn: str | None = None) -> dict:
@@ -47,8 +47,8 @@ def show(title: str) -> None:
 
 
 def main() -> None:
-    charter.configure_ledger(sink_path=SINK)
-    interceptor = CharterInterceptor(policies=[allow_everything()], agent_id="ops_agent")
+    chokepoint.configure_ledger(sink_path=SINK)
+    interceptor = ChokepointInterceptor(policies=[allow_everything()], agent_id="ops_agent")
 
     show("default: secrets scrubbed, everything else intact")
     interceptor.call(
@@ -61,7 +61,7 @@ def main() -> None:
             "notes": ["deploy key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345", "all good"],
         },
     )
-    event = charter.ActionLedger.current().events()[-1]
+    event = chokepoint.ActionLedger.current().events()[-1]
     print(f"  url             {event.args['url']}")
     print(f"  authorization   {event.args['authorization']}")
     print(f"  payload.token   {event.args['payload']['token']}")
@@ -73,29 +73,29 @@ def main() -> None:
 
     show("PII is opt-in — an email is often the point of the call")
     interceptor.call("send_email", send_email, to="alice@example.com", body="hi")
-    print(f"  to  {charter.ActionLedger.current().events()[-1].args['to']}   (recorded as-is)")
+    print(f"  to  {chokepoint.ActionLedger.current().events()[-1].args['to']}   (recorded as-is)")
 
-    charter.configure_redaction(include_pii=True, keys=["mrn", "dob"])
+    chokepoint.configure_redaction(include_pii=True, keys=["mrn", "dob"])
     interceptor.call("send_email", send_email, to="alice@example.com", body="hi")
-    print(f"  to  {charter.ActionLedger.current().events()[-1].args['to']}   (after opting in)")
+    print(f"  to  {chokepoint.ActionLedger.current().events()[-1].args['to']}   (after opting in)")
 
     show("a domain-specific field, redacted by name")
     interceptor.call("send_email", send_email, to="x@y.com", body="mrn on file", mrn="MRN-99887")
-    print(f"  mrn {charter.ActionLedger.current().events()[-1].args['mrn']}")
+    print(f"  mrn {chokepoint.ActionLedger.current().events()[-1].args['mrn']}")
 
     show("your own pattern")
-    charter.configure_redaction(extra_patterns=[("employee_id", re.compile(r"\bEMP-\d{5}\b"))])
+    chokepoint.configure_redaction(extra_patterns=[("employee_id", re.compile(r"\bEMP-\d{5}\b"))])
     interceptor.call("send_email", send_email, to="x@y.com", body="approved by EMP-12345")
-    print(f"  body {charter.ActionLedger.current().events()[-1].args['body']}")
+    print(f"  body {chokepoint.ActionLedger.current().events()[-1].args['body']}")
 
     show("policies still see the real values")
-    charter.configure_redaction()  # back to defaults
-    guarded = CharterInterceptor(policies=[no_secrets_in_args()], agent_id="ops_agent")
+    chokepoint.configure_redaction()  # back to defaults
+    guarded = ChokepointInterceptor(policies=[no_secrets_in_args()], agent_id="ops_agent")
     try:
         guarded.call("call_api", call_api, url="https://x", authorization=AWS_KEY, payload={})
     except GuardBlocked as exc:
         print(f"  blocked: {exc.decision.reason}")
-    blocked = charter.ActionLedger.current().events()[-1]
+    blocked = chokepoint.ActionLedger.current().events()[-1]
     print(f"  ...and the blocking record itself is clean: {blocked.args['authorization']}")
 
     show("nothing raw ever reached the disk")
@@ -106,10 +106,10 @@ def main() -> None:
     print(f"  contains 'REDACTED'?   {'REDACTED' in raw}")
 
     show("the tradeoff: replay of a redacted event is not comparable")
-    result = charter.replay(blocked.event_id)
+    result = chokepoint.replay(blocked.event_id)
     print(f"  ReplayResult.redacted = {result.redacted}")
     print("  Predicates would see placeholders, not the values they originally judged.")
-    print("  `charter export --format fixtures` skips these rather than emitting")
+    print("  `chokepoint export --format fixtures` skips these rather than emitting")
     print("  tests that cannot pass.")
 
 

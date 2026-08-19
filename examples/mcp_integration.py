@@ -1,6 +1,6 @@
 """Guarding MCP `tools/call` from both sides, over an in-memory transport.
 
-MCP is how most agents reach tools today, and Charter can sit on either end:
+MCP is how most agents reach tools today, and Chokepoint can sit on either end:
 
 - **Client side** — you run the agent and police what it asks any server to
   do. A denial raises `GuardBlocked` into your own calling code.
@@ -22,12 +22,12 @@ import asyncio
 
 from mcp import ClientSession  # noqa: F401  (documents the client type being guarded)
 
-import charter
-from charter import ESCALATE, CharterInterceptor, GuardBlocked, PolicySet
-from charter.policies import path_within
+import chokepoint
+from chokepoint import ESCALATE, ChokepointInterceptor, GuardBlocked, PolicySet
+from chokepoint.policies import path_within
 
 # mcp 2.0 renamed the server class and replaced the in-memory test helper.
-# Charter's adapter handles either generation; this example picks whichever is
+# Chokepoint's adapter handles either generation; this example picks whichever is
 # installed so it runs against both.
 try:  # mcp >= 2
     from contextlib import asynccontextmanager
@@ -54,7 +54,7 @@ WORKSPACE = "/tmp/agent-workspace"
 
 
 def build_server() -> ServerClass:
-    """An ordinary MCP server. Nothing here knows Charter exists."""
+    """An ordinary MCP server. Nothing here knows Chokepoint exists."""
     server = ServerClass("files")
 
     @server.tool()
@@ -87,11 +87,11 @@ def build_policies() -> list:
 
 async def client_side() -> None:
     print("\n=== client side: guarding what the agent asks for ===")
-    interceptor = CharterInterceptor(policies=build_policies(), agent_id="file_agent")
+    interceptor = ChokepointInterceptor(policies=build_policies(), agent_id="file_agent")
     server = build_server()
 
     async with connected_session(server) as session:
-        charter.wrap(session, interceptor)  # auto-detected as an MCP ClientSession
+        chokepoint.wrap(session, interceptor)  # auto-detected as an MCP ClientSession
 
         result = await session.call_tool("read_file", {"path": f"{WORKSPACE}/notes.md"})
         print(f"  read inside the workspace : allowed -> {result.content[0].text}")
@@ -108,9 +108,9 @@ async def client_side() -> None:
 
 async def server_side() -> None:
     print("\n=== server side: guarding whoever connects ===")
-    interceptor = CharterInterceptor(policies=build_policies(), agent_id="mcp_server")
+    interceptor = ChokepointInterceptor(policies=build_policies(), agent_id="mcp_server")
     server = build_server()
-    charter.wrap(server, interceptor)  # auto-detected as an MCP server
+    chokepoint.wrap(server, interceptor)  # auto-detected as an MCP server
 
     async with connected_session(server) as session:
         for name, args in [
@@ -133,7 +133,7 @@ async def main() -> None:
     await server_side()
 
     print("\n=== ledger ===")
-    for event in charter.ActionLedger.current().events():
+    for event in chokepoint.ActionLedger.current().events():
         print(f"  {event.decision:<8} {event.tool:<12} {event.caller_agent_id:<12} {event.reason[:60]}")
 
 

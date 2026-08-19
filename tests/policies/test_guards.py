@@ -2,9 +2,9 @@
 
 import pytest
 
-from charter.core.interceptor import CharterInterceptor
-from charter.decisions import GuardBlocked
-from charter.policies import (
+from chokepoint.core.interceptor import ChokepointInterceptor
+from chokepoint.decisions import GuardBlocked
+from chokepoint.policies import (
     domain_allowlist,
     find_secrets,
     host_allowed,
@@ -53,7 +53,7 @@ def test_secrets_nested_in_a_payload_are_found():
 
 
 def test_no_secrets_in_args_blocks_a_leaking_call():
-    interceptor = CharterInterceptor(policies=[no_secrets_in_args()])
+    interceptor = ChokepointInterceptor(policies=[no_secrets_in_args()])
     interceptor.call("post", _noop, body="nothing sensitive")
 
     with pytest.raises(GuardBlocked, match="credential"):
@@ -74,7 +74,7 @@ def test_no_secrets_in_args_blocks_a_leaking_call():
     ],
 )
 def test_destructive_sql_is_blocked(query):
-    interceptor = CharterInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
+    interceptor = ChokepointInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
     with pytest.raises(GuardBlocked):
         interceptor.call("run_sql", _noop, query=query)
 
@@ -89,20 +89,20 @@ def test_destructive_sql_is_blocked(query):
     ],
 )
 def test_ordinary_sql_passes(query):
-    interceptor = CharterInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
+    interceptor = ChokepointInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
     interceptor.call("run_sql", _noop, query=query)
 
 
 def test_unbounded_writes_can_be_allowed_while_drops_stay_blocked():
     policy = no_destructive_sql(tool_names=("run_sql",), allow_unbounded_writes=True)
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     interceptor.call("run_sql", _noop, query="DELETE FROM users")
     with pytest.raises(GuardBlocked):
         interceptor.call("run_sql", _noop, query="DROP TABLE users")
 
 
 def test_sql_policy_scoped_by_tool_ignores_other_tools():
-    interceptor = CharterInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
+    interceptor = ChokepointInterceptor(policies=[no_destructive_sql(tool_names=("run_sql",))])
     interceptor.call("send_email", _noop, query="DROP TABLE users")
 
 
@@ -121,7 +121,7 @@ def test_sql_policy_scoped_by_tool_ignores_other_tools():
     ],
 )
 def test_destructive_shell_is_blocked(command):
-    interceptor = CharterInterceptor(policies=[no_destructive_shell(tool_names=("run_shell",))])
+    interceptor = ChokepointInterceptor(policies=[no_destructive_shell(tool_names=("run_shell",))])
     with pytest.raises(GuardBlocked):
         interceptor.call("run_shell", _noop, command=command)
 
@@ -131,7 +131,7 @@ def test_destructive_shell_is_blocked(command):
     ["ls -la", "rm ./tmp.txt", "grep -r pattern .", "python script.py", "git status"],
 )
 def test_ordinary_shell_passes(command):
-    interceptor = CharterInterceptor(policies=[no_destructive_shell(tool_names=("run_shell",))])
+    interceptor = ChokepointInterceptor(policies=[no_destructive_shell(tool_names=("run_shell",))])
     interceptor.call("run_shell", _noop, command=command)
 
 
@@ -141,7 +141,7 @@ def test_ordinary_shell_passes(command):
 def test_path_within_allows_inside_and_blocks_traversal(tmp_path):
     root = tmp_path / "workspace"
     root.mkdir()
-    interceptor = CharterInterceptor(policies=[path_within([root], tool_names=("write_file",))])
+    interceptor = ChokepointInterceptor(policies=[path_within([root], tool_names=("write_file",))])
 
     interceptor.call("write_file", _noop, path=str(root / "notes.txt"))
     interceptor.call("write_file", _noop, path=str(root / "sub" / "deep.txt"))
@@ -158,13 +158,13 @@ def test_path_within_follows_symlinks_out_of_the_root(tmp_path):
     outside.mkdir()
     (root / "link").symlink_to(outside)
 
-    interceptor = CharterInterceptor(policies=[path_within([root], tool_names=("write_file",))])
+    interceptor = ChokepointInterceptor(policies=[path_within([root], tool_names=("write_file",))])
     with pytest.raises(GuardBlocked):
         interceptor.call("write_file", _noop, path=str(root / "link" / "key.pem"))
 
 
 def test_path_within_fails_closed_on_a_missing_argument(tmp_path):
-    interceptor = CharterInterceptor(policies=[path_within([tmp_path], tool_names=("write_file",))])
+    interceptor = ChokepointInterceptor(policies=[path_within([tmp_path], tool_names=("write_file",))])
     with pytest.raises(GuardBlocked):
         interceptor.call("write_file", _noop, filename="notes.txt")  # wrong arg name
 
@@ -195,7 +195,7 @@ def test_leading_dot_allows_subdomains():
 
 def test_domain_allowlist_blocks_an_unlisted_host():
     policy = domain_allowlist(["api.stripe.com"], tool_names=("http_get",))
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     interceptor.call("http_get", _noop, url="https://api.stripe.com/v1/charges")
     with pytest.raises(GuardBlocked, match="outside the allowlist"):
@@ -204,7 +204,7 @@ def test_domain_allowlist_blocks_an_unlisted_host():
 
 def test_domain_allowlist_rejects_non_https_by_default():
     policy = domain_allowlist(["api.stripe.com"], tool_names=("http_get",))
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     with pytest.raises(GuardBlocked, match="schemes"):
         interceptor.call("http_get", _noop, url="http://api.stripe.com/v1")
     with pytest.raises(GuardBlocked, match="schemes"):
@@ -213,7 +213,7 @@ def test_domain_allowlist_rejects_non_https_by_default():
 
 def test_domain_allowlist_can_widen_allowed_schemes():
     policy = domain_allowlist(["localhost"], tool_names=("http_get",), allowed_schemes=("http",))
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     interceptor.call("http_get", _noop, url="http://localhost:8080/health")
 
 
@@ -223,7 +223,7 @@ def test_domain_allowlist_can_widen_allowed_schemes():
 def test_shipped_policies_compose_with_the_operators():
     """They are ordinary PolicySets, so & / | / ~ work as usual."""
     combined = no_secrets_in_args() & no_destructive_shell(tool_names=("run_shell",))
-    interceptor = CharterInterceptor(policies=[combined])
+    interceptor = ChokepointInterceptor(policies=[combined])
 
     interceptor.call("run_shell", _noop, command="ls -la")
     with pytest.raises(GuardBlocked):

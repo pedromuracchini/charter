@@ -2,9 +2,9 @@
 
 import pytest
 
-from charter.core.interceptor import CharterInterceptor
-from charter.decisions import ESCALATE, GuardBlocked
-from charter.policies import (
+from chokepoint.core.interceptor import ChokepointInterceptor
+from chokepoint.decisions import ESCALATE, GuardBlocked
+from chokepoint.policies import (
     budget_policy,
     extract_usage,
     token_budget_policy,
@@ -67,8 +67,8 @@ def test_token_count_sums_both_directions():
 
 
 def test_token_cost_prices_per_million_by_default():
-    from charter._scope import ExecutionScope
-    from charter.core.context import GuardContext
+    from chokepoint._scope import ExecutionScope
+    from chokepoint.core.context import GuardContext
 
     ctx = GuardContext.build(tool_name="t", args={}, scope=ExecutionScope())
     ctx.result = {"usage": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}}
@@ -77,8 +77,8 @@ def test_token_cost_prices_per_million_by_default():
 
 
 def test_token_cost_accepts_per_1k_pricing():
-    from charter._scope import ExecutionScope
-    from charter.core.context import GuardContext
+    from chokepoint._scope import ExecutionScope
+    from chokepoint.core.context import GuardContext
 
     ctx = GuardContext.build(tool_name="t", args={}, scope=ExecutionScope())
     ctx.result = {"usage": {"input_tokens": 1000, "output_tokens": 1000}}
@@ -93,7 +93,7 @@ def test_token_budget_stops_the_session_once_spent():
     """$0.90 per call against a $2 cap: three run, the fourth is refused."""
     tool = _llm(input_tokens=200_000, output_tokens=20_000)
     policy = token_budget_policy(2.00, input_price=3.00, output_price=15.00, tool_name="call_llm")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     for _ in range(3):
         interceptor.call("call_llm", tool, prompt="x")
@@ -112,7 +112,7 @@ def test_the_call_that_crosses_the_threshold_still_runs():
         return {"usage": {"input_tokens": 1_000_000, "output_tokens": 0}}
 
     policy = token_budget_policy(1.00, input_price=10.00, output_price=0.0, tool_name="call_llm")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     interceptor.call("call_llm", tool, prompt="x")  # spends 10.00 against a 1.00 cap
     assert calls == [1]
@@ -125,7 +125,7 @@ def test_the_call_that_crosses_the_threshold_still_runs():
 def test_token_budget_is_per_session():
     tool = _llm(input_tokens=1_000_000, output_tokens=0)
     policy = token_budget_policy(1.00, input_price=10.00, output_price=0.0, tool_name="call_llm")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     interceptor.call("call_llm", tool, session_id="a", prompt="x")
     with pytest.raises(GuardBlocked):
@@ -145,7 +145,7 @@ def test_token_budget_can_escalate_instead_of_blocking():
         on_fail=ESCALATE,
         escalate_to="unrouted://approvals",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     interceptor.call("call_llm", tool, prompt="x")
 
     with pytest.raises(GuardBlocked, match="escalation denied"):
@@ -154,7 +154,7 @@ def test_token_budget_can_escalate_instead_of_blocking():
 
 def test_token_limit_counts_tokens_not_money():
     tool = _llm(input_tokens=4000, output_tokens=1000)
-    interceptor = CharterInterceptor(policies=[token_limit_policy(12_000, tool_name="call_llm")])
+    interceptor = ChokepointInterceptor(policies=[token_limit_policy(12_000, tool_name="call_llm")])
 
     interceptor.call("call_llm", tool, prompt="x")  # 5,000
     interceptor.call("call_llm", tool, prompt="x")  # 10,000
@@ -171,7 +171,7 @@ def test_a_failing_llm_call_is_not_charged():
         raise RuntimeError("upstream 500")
 
     policy = token_budget_policy(0.01, input_price=1000.0, output_price=0.0, tool_name="call_llm")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     for _ in range(5):
         with pytest.raises(RuntimeError):
@@ -197,7 +197,7 @@ def test_actual_from_reads_the_result_which_pre_hooks_cannot_see():
         actual_from=lambda ctx: ctx.result["usage"]["output_tokens"],
         tool_name="call_llm",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
     interceptor.call("call_llm", _llm(output_tokens=10), prompt="x")
 
 
@@ -211,7 +211,7 @@ def test_an_estimate_bounds_the_overshoot_and_the_actual_supersedes_it():
         actual_from=lambda ctx: float(ctx.result["usage"]["output_tokens"]),
         tool_name="call_llm",
     )
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     interceptor.call("call_llm", tool, prompt="x")  # charged 100, not 10 or 110
     interceptor.call("call_llm", tool, prompt="x")  # 200
@@ -225,7 +225,7 @@ def test_an_estimate_bounds_the_overshoot_and_the_actual_supersedes_it():
 def test_argument_based_budgets_are_unchanged():
     """The original shape has to keep working exactly as before."""
     policy = budget_policy(100.0, lambda ctx: ctx.args["amount"], tool_name="transfer")
-    interceptor = CharterInterceptor(policies=[policy])
+    interceptor = ChokepointInterceptor(policies=[policy])
 
     interceptor.call("transfer", lambda **kw: None, amount=60.0)
     interceptor.call("transfer", lambda **kw: None, amount=30.0)

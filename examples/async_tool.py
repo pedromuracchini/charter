@@ -1,4 +1,4 @@
-"""Async tool support: `@guard` and `CharterInterceptor.acall()` both
+"""Async tool support: `@guard` and `ChokepointInterceptor.acall()` both
 auto-detect an `async def` tool function and dispatch to the async engine —
 no separate decorator or interceptor class needed.
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from charter import BLOCK, CharterInterceptor, GuardBlocked, guard
+from chokepoint import BLOCK, ChokepointInterceptor, GuardBlocked, guard
 
 
 @guard(pre=lambda ctx: ctx.args["amount"] < 500, on_fail=BLOCK, reason="amount too large")
@@ -34,9 +34,9 @@ async def main() -> None:
     except GuardBlocked as exc:
         print(f"blocked: {exc.decision.reason}")
 
-    # CharterInterceptor.acall(): the interceptor-based equivalent, useful when
+    # ChokepointInterceptor.acall(): the interceptor-based equivalent, useful when
     # wiring up an agent's full toolset (mode=enforce/dry_run/observe, identity, ...).
-    interceptor = CharterInterceptor(policies=[])
+    interceptor = ChokepointInterceptor(policies=[])
     print(await interceptor.acall("read_balance", read_balance, account_id="acct_1"))
 
 

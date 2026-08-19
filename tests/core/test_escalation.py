@@ -4,25 +4,25 @@ import warnings
 
 import pytest
 
-from charter._engine import (
+from chokepoint._engine import (
     _run_with_timeout,
     _run_with_timeout_async,
     evaluate_call,
     evaluate_call_async,
 )
-from charter._scope import ExecutionScope, current_scope, use_scope
-from charter.core.context import GuardContext
-from charter.core.escalation import (
+from chokepoint._scope import ExecutionScope, current_scope, use_scope
+from chokepoint.core.context import GuardContext
+from chokepoint.core.escalation import (
     EscalationHandler,
     FailSafeEscalationHandler,
     register_handler,
     resolve_handler,
 )
-from charter.core.policy_set import PolicySet
-from charter.core.reversible import ReversibleAction
-from charter.decisions import ESCALATE, GuardBlocked, RuleResult
-from charter.errors import ConfigurationError, ConfigurationWarning
-from charter.ledger.ledger import ActionLedger
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.core.reversible import ReversibleAction
+from chokepoint.decisions import ESCALATE, GuardBlocked, RuleResult
+from chokepoint.errors import ConfigurationError, ConfigurationWarning
+from chokepoint.ledger.ledger import ActionLedger
 
 
 def _ctx():

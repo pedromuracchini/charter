@@ -7,8 +7,8 @@ Run directly:
 
 from __future__ import annotations
 
-from charter import (
-    CharterInterceptor,
+from chokepoint import (
+    ChokepointInterceptor,
     EscalationHandler,
     GuardBlocked,
     ReversibleAction,
@@ -17,7 +17,7 @@ from charter import (
 
 _inventory: dict[int, dict] = {1: {"name": "widget", "qty": 10}}
 
-interceptor = CharterInterceptor(policies=[])
+interceptor = ChokepointInterceptor(policies=[])
 
 
 class ApproveEverything(EscalationHandler):
@@ -83,7 +83,7 @@ def main() -> None:
 
     # ...and the same action with no `escalate_to`: its escalation resolves to
     # the fail-safe handler, which denies, so it behaves exactly like
-    # "permanent". `charter lint` warns about this — it is almost never what
+    # "permanent". `chokepoint lint` warns about this — it is almost never what
     # picking "high" over "permanent" was meant to express.
     unrouted = ReversibleAction(
         do_fn=lambda a: {"deleted": a["id"]},

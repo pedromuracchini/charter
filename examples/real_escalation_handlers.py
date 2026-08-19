@@ -24,7 +24,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
-from charter import (
+from chokepoint import (
     ESCALATE,
     CLIEscalationHandler,
     GuardBlocked,
@@ -75,7 +75,7 @@ def slack_section() -> None:
     def transfer_funds(amount: float, to: str) -> dict:
         return {"transferred": amount, "to": to}
 
-    with patch("charter.escalation.slack.urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("chokepoint.escalation.slack.urllib.request.urlopen", side_effect=fake_urlopen):
         print(transfer_funds(amount=2000, to="alice"))
 
 

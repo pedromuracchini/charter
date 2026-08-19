@@ -1,11 +1,11 @@
 import pytest
 
-from charter._scope import ExecutionScope
-from charter.core.context import GuardContext
-from charter.core.escalation import register_handler
-from charter.core.policy_set import PolicySet
-from charter.decisions import ESCALATE, GuardBlocked, RuleResult
-from charter.escalation.cli import CLIEscalationHandler
+from chokepoint._scope import ExecutionScope
+from chokepoint.core.context import GuardContext
+from chokepoint.core.escalation import register_handler
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import ESCALATE, GuardBlocked, RuleResult
+from chokepoint.escalation.cli import CLIEscalationHandler
 
 
 def _ctx():
@@ -99,8 +99,8 @@ def test_end_to_end_through_evaluate_call():
         timeout_s=5,
     )
 
-    from charter._engine import evaluate_call
-    from charter._scope import current_scope
+    from chokepoint._engine import evaluate_call
+    from chokepoint._scope import current_scope
 
     result = evaluate_call(
         tool_name="delete_prod_db",
@@ -126,8 +126,8 @@ def test_end_to_end_denied_raises_guard_blocked():
         timeout_s=5,
     )
 
-    from charter._engine import evaluate_call
-    from charter._scope import current_scope
+    from chokepoint._engine import evaluate_call
+    from chokepoint._scope import current_scope
 
     with pytest.raises(GuardBlocked):
         evaluate_call(

@@ -1,49 +1,49 @@
-# Charter
+# Chokepoint
 
-[![CI](https://github.com/pedromuracchini/charter/actions/workflows/ci.yml/badge.svg)](https://github.com/pedromuracchini/charter/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/charter.svg)](https://pypi.org/project/charter/)
-[![Python](https://img.shields.io/pypi/pyversions/charter.svg)](https://pypi.org/project/charter/)
+[![CI](https://github.com/pedromuracchini/chokepoint/actions/workflows/ci.yml/badge.svg)](https://github.com/pedromuracchini/chokepoint/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/chokepoint.svg)](https://pypi.org/project/chokepoint/)
+[![Python](https://img.shields.io/pypi/pyversions/chokepoint.svg)](https://pypi.org/project/chokepoint/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-pedromuracchini.github.io-teal.svg)](https://pedromuracchini.github.io/charter/)
+[![Docs](https://img.shields.io/badge/docs-pedromuracchini.github.io-teal.svg)](https://pedromuracchini.github.io/chokepoint/)
 
-Charter expresses AI agent authorization policies as deterministic, code-defined
+Chokepoint expresses AI agent authorization policies as deterministic, code-defined
 predicates evaluated by the runtime — never as natural-language instructions in a
-prompt. Every tool call passes through the gate (pre-hook and post-hook)
+prompt. Every tool call passes through the chokepoint (pre-hook and post-hook)
 before and after it executes. The LLM never sees, interprets, or reasons its way
 around a policy: policies are plain Python, evaluated outside the model's context.
 
 Framework-agnostic — it's a middleware layer between an agent and its tools, not a
 full agent harness. The
-[architecture guide](https://pedromuracchini.github.io/charter/architecture/)
+[architecture guide](https://pedromuracchini.github.io/chokepoint/architecture/)
 explains the design rationale; the
-[API reference](https://pedromuracchini.github.io/charter/reference/) has the
+[API reference](https://pedromuracchini.github.io/chokepoint/reference/) has the
 signature-level detail.
 
 ## Install
 
 ```bash
-uv add charter                        # or: pip install charter
-uv add "charter[otel]"                # with OpenTelemetry spans/metrics
-uv add "charter[langgraph]"           # to wrap LangChain/LangGraph tools
-uv add "charter[openai-agents]"       # to wrap OpenAI Agents SDK tools
-uv add "charter[mcp]"                 # to guard MCP tools/call, client or server side
-uv add "charter[all]"                 # every optional integration at once
+uv add chokepoint                        # or: pip install chokepoint
+uv add "chokepoint[otel]"                # with OpenTelemetry spans/metrics
+uv add "chokepoint[langgraph]"           # to wrap LangChain/LangGraph tools
+uv add "chokepoint[openai-agents]"       # to wrap OpenAI Agents SDK tools
+uv add "chokepoint[mcp]"                 # to guard MCP tools/call, client or server side
+uv add "chokepoint[all]"                 # every optional integration at once
 ```
 
 ## Batteries included
 
-`charter.policies` ships the rules nearly every agent needs, so you don't
+`chokepoint.policies` ships the rules nearly every agent needs, so you don't
 start from a blank lambda. Each returns an ordinary `PolicySet` and composes
 with `&` / `|` / `~` like anything you'd write by hand:
 
 ```python
-from charter import CharterInterceptor
-from charter.policies import (
+from chokepoint import ChokepointInterceptor
+from chokepoint.policies import (
     budget_policy, domain_allowlist, no_destructive_shell,
     no_secrets_in_args, path_within, rate_limit_policy, token_budget_policy,
 )
 
-interceptor = CharterInterceptor(policies=[
+interceptor = ChokepointInterceptor(policies=[
     no_secrets_in_args(),                                   # API keys, JWTs, PEM blocks
     no_destructive_shell(tool_names=("run_shell",)),        # rm -rf, mkfs, dd of=/dev/...
     path_within(["/srv/workspace"], tool_names=("write_file",)),
@@ -89,7 +89,7 @@ them.
 ## Quickstart
 
 ```python
-from charter import guard, BLOCK, ESCALATE
+from chokepoint import guard, BLOCK, ESCALATE
 
 @guard(
     pre=lambda ctx: ctx.state_checksum_matches(),
@@ -109,22 +109,22 @@ def transfer_funds(amount: float, to: str) -> dict:
     ...
 ```
 
-A blocked or denied-escalation call raises `charter.GuardBlocked` instead of
+A blocked or denied-escalation call raises `chokepoint.GuardBlocked` instead of
 running. Guarded functions keep their original signature — call them
 positionally or by keyword as usual — and `ctx.args` is always the flat
 name → value mapping, mirroring how agent frameworks pass tool-call arguments
 as a JSON object.
 
-Every error Charter raises on purpose derives from `charter.CharterError`,
+Every error Chokepoint raises on purpose derives from `chokepoint.ChokepointError`,
 so one `except` clause catches the library's failures without swallowing your
 own bugs:
 
 ```python
 try:
     transfer_funds(amount=1000, to="alice")
-except charter.GuardBlocked as exc:
+except chokepoint.GuardBlocked as exc:
     print(exc.decision.reason, exc.decision.policy_name)
-except charter.CharterError:
+except chokepoint.ChokepointError:
     ...  # misconfiguration, escalation transport failure, ledger problem
 ```
 
@@ -138,7 +138,7 @@ always denies (fail-safe) — register a real handler to actually resolve it:
 ```python
 import os
 
-from charter import SlackEscalationHandler, register_handler
+from chokepoint import SlackEscalationHandler, register_handler
 
 register_handler(
     "slack",
@@ -160,9 +160,9 @@ end to end.
 ## Multi-agent: the same tool, different outcomes per caller
 
 ```python
-from charter import CharterRegistry, CharterInterceptor, AgentScopedPolicy, BLOCK
+from chokepoint import ChokepointRegistry, ChokepointInterceptor, AgentScopedPolicy, BLOCK
 
-registry = CharterRegistry()
+registry = ChokepointRegistry()
 registry.register("clinical_agent", role="licensed_physician")
 registry.register("support_agent", role="support_staff")
 
@@ -174,8 +174,8 @@ delete_policy = AgentScopedPolicy(
     reason="deleting a patient record is restricted to physicians",
 )
 
-clinical = CharterInterceptor(registry=registry, agent_id="clinical_agent", policies=[delete_policy])
-support = CharterInterceptor(registry=registry, agent_id="support_agent", policies=[delete_policy])
+clinical = ChokepointInterceptor(registry=registry, agent_id="clinical_agent", policies=[delete_policy])
+support = ChokepointInterceptor(registry=registry, agent_id="support_agent", policies=[delete_policy])
 
 clinical.call("delete_patient", delete_patient, id=1)  # allowed
 support.call("delete_patient", delete_patient, id=1)   # GuardBlocked
@@ -183,7 +183,7 @@ support.call("delete_patient", delete_patient, id=1)   # GuardBlocked
 
 `call()` takes the tool's arguments as keywords for brevity, but `session_id`
 and `domain` are its own parameters. If your tool declares an argument by
-either name, pass the arguments explicitly instead — Charter warns rather than
+either name, pass the arguments explicitly instead — Chokepoint warns rather than
 silently dropping one:
 
 ```python
@@ -202,7 +202,7 @@ uv run python examples/clinical.py
 
 ## Async tools
 
-`@guard` and `CharterInterceptor.acall()` auto-detect an `async def` tool
+`@guard` and `ChokepointInterceptor.acall()` auto-detect an `async def` tool
 function — no separate decorator or interceptor class needed:
 
 ```python
@@ -219,7 +219,7 @@ Run the full worked example with `uv run python examples/async_tool.py`.
 
 ## Framework integration
 
-`interceptor.use(agent)` (or the module-level `charter.wrap(agent, interceptor)`)
+`interceptor.use(agent)` (or the module-level `chokepoint.wrap(agent, interceptor)`)
 auto-detects LangChain/LangGraph `BaseTool` objects and OpenAI Agents SDK
 `FunctionTool` objects — no manual adapter registration needed:
 
@@ -237,11 +237,11 @@ MCP is auto-detected too, on either side of the protocol:
 
 ```python
 # Client side — police what your agent asks any server to do. A denial raises.
-charter.wrap(client_session, interceptor)
+chokepoint.wrap(client_session, interceptor)
 
 # Server side — the policy holds whoever connects. A denial returns
 # CallToolResult(isError=True), because raising would kill the connection.
-charter.wrap(mcp_server, interceptor)
+chokepoint.wrap(mcp_server, interceptor)
 ```
 
 Works with mcp 1.x and 2.x alike — the adapter detects which registration API
@@ -249,14 +249,14 @@ the installed package exposes, so `MCPServer` (2.x), `FastMCP` (1.x) and a
 low-level `Server` are all accepted, as is 2.x's `Client` facade on the client
 side.
 
-Requires the matching extra (`charter[langgraph]` / `charter[openai-agents]` /
-`charter[mcp]`). Run `uv run python examples/langgraph_integration.py`,
+Requires the matching extra (`chokepoint[langgraph]` / `chokepoint[openai-agents]` /
+`chokepoint[mcp]`). Run `uv run python examples/langgraph_integration.py`,
 `examples/openai_agents_integration.py`, or `examples/mcp_integration.py`.
 
 ## Reversible actions
 
 ```python
-from charter import ReversibleAction
+from chokepoint import ReversibleAction
 
 delete_s3_bucket = ReversibleAction(
     do_fn=lambda args: s3.delete_bucket(args["bucket"]),
@@ -274,7 +274,7 @@ is an unconditional block — the action never runs.
 
 A `"high"` action needs an `escalate_to` target to differ from `"permanent"`:
 with none, its escalation resolves to the fail-safe handler, which denies, so
-every call is blocked. `charter lint` warns about this.
+every call is blocked. `chokepoint lint` warns about this.
 
 ## Examples
 
@@ -289,13 +289,13 @@ Every file under `examples/` is runnable directly (`uv run python examples/<name
 | `real_escalation_handlers.py` | The three built-in real handlers — `SlackEscalationHandler`, `WebhookEscalationHandler`, `CLIEscalationHandler` — each demonstrated end to end. |
 | `reversible_levels.py` | `ReversibleAction`'s four `irreversibility_level`s side by side. |
 | `delegation_chain.py` | Confused-deputy prevention via delegation-chain depth (`max_delegation_depth_policy`), not just role. |
-| `clinical.py` | The full multi-agent story: `CharterRegistry`, `AgentScopedPolicy`, `ReversibleAction`, escalation, two interceptors sharing one tool. |
+| `clinical.py` | The full multi-agent story: `ChokepointRegistry`, `AgentScopedPolicy`, `ReversibleAction`, escalation, two interceptors sharing one tool. |
 | `multi_agent_orchestrator.py` | A centralized registry with 4 agents, several tools, role + trust-level policies together, and an exported delegation graph. |
-| `async_tool.py` | `@guard` and `CharterInterceptor.acall()` on `async def` tools. |
-| `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `charter[langgraph]`). |
-| `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `charter[openai-agents]`). |
-| `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `charter[mcp]`). |
-| `builtin_policies.py` | Every policy in `charter.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
+| `async_tool.py` | `@guard` and `ChokepointInterceptor.acall()` on `async def` tools. |
+| `langgraph_integration.py` | Wrapping real `langchain_core.tools.BaseTool` objects for LangGraph (requires `chokepoint[langgraph]`). |
+| `openai_agents_integration.py` | Wrapping real `agents.FunctionTool` objects for the OpenAI Agents SDK (requires `chokepoint[openai-agents]`). |
+| `mcp_integration.py` | Guarding MCP `tools/call` from both the client and the server side (requires `chokepoint[mcp]`). |
+| `builtin_policies.py` | Every policy in `chokepoint.policies` — secrets, destructive SQL/shell, path confinement, domain allowlist, rate limit, budget. |
 | `redaction.py` | Keeping secrets and PII out of the ledger, the JSONL sink, the exports and the Slack message. |
 | `audit_and_reporting.py` | `ActionLedger`'s compliance/graph/narrative/pytest-fixture export methods. |
 
@@ -307,13 +307,13 @@ durability story. For a full lossless history, point it at a JSONL file once at
 startup, before the first guarded call:
 
 ```python
-import charter
+import chokepoint
 
-charter.configure_ledger(sink_path="/var/log/charter/decisions.jsonl")
+chokepoint.configure_ledger(sink_path="/var/log/chokepoint/decisions.jsonl")
 ```
 
 Every event is mirrored to that file regardless of the in-memory cap, and
-`charter report --ledger /var/log/charter/decisions.jsonl` reads it back. A
+`chokepoint report --ledger /var/log/chokepoint/decisions.jsonl` reads it back. A
 sink write that fails is logged and counted in `ActionLedger.sink_error_count`,
 never raised: recording happens after the tool has already run, so a full disk
 must not turn a call the policies allowed into an exception.
@@ -322,7 +322,7 @@ For several tenants in one process, give each interceptor its own ledger
 instead of configuring the global one:
 
 ```python
-interceptor = CharterInterceptor(policies=[...], ledger=ActionLedger(sink_path=...))
+interceptor = ChokepointInterceptor(policies=[...], ledger=ActionLedger(sink_path=...))
 ```
 
 ### Redaction
@@ -343,12 +343,12 @@ patterns (email, SSN, IBAN, Luhn-checked card numbers) are opt-in, because an
 email address is often the point of the call:
 
 ```python
-charter.configure_redaction(include_pii=True, keys=["mrn", "dob"])
-charter.configure_redaction(enabled=False)          # off entirely
-charter.configure_redaction(redactor=MyDLPClient())  # your own scrubber
+chokepoint.configure_redaction(include_pii=True, keys=["mrn", "dob"])
+chokepoint.configure_redaction(enabled=False)          # off entirely
+chokepoint.configure_redaction(redactor=MyDLPClient())  # your own scrubber
 ```
 
-One tradeoff: `charter.replay()` reconstructs its context from the stored
+One tradeoff: `chokepoint.replay()` reconstructs its context from the stored
 event, so replaying a redacted call feeds placeholders to the predicates.
 `ReplayResult.redacted` flags it, and `export --format fixtures` skips those
 events instead of emitting tests that cannot pass. Run
@@ -357,16 +357,16 @@ events instead of emitting tests that cannot pass. Run
 ## CLI
 
 ```bash
-uv run charter --version
-uv run charter report --agent my_agent.py                        # policy inventory + coverage
-uv run charter report --agent my_agent.py --format mermaid       # coverage graph
-uv run charter report --agent my_agent.py --delegation           # delegation graph
-uv run charter report --agent my_agent.py --fail-under 0.8       # CI gate on tool coverage
-uv run charter lint --agent my_agent.py                          # static policy checks
-uv run charter replay evt_a3f9b2                                 # replay a ledger event
-uv run charter repl --agent my_agent.py                          # synthetic-context REPL
-uv run charter export --format narrative --ledger audit.jsonl    # plain-English audit summary
-uv run charter export --format fixtures -o test_policies.py      # pytest tests from real decisions
+uv run chokepoint --version
+uv run chokepoint report --agent my_agent.py                        # policy inventory + coverage
+uv run chokepoint report --agent my_agent.py --format mermaid       # coverage graph
+uv run chokepoint report --agent my_agent.py --delegation           # delegation graph
+uv run chokepoint report --agent my_agent.py --fail-under 0.8       # CI gate on tool coverage
+uv run chokepoint lint --agent my_agent.py                          # static policy checks
+uv run chokepoint replay evt_a3f9b2                                 # replay a ledger event
+uv run chokepoint repl --agent my_agent.py                          # synthetic-context REPL
+uv run chokepoint export --format narrative --ledger audit.jsonl    # plain-English audit summary
+uv run chokepoint export --format fixtures -o test_policies.py      # pytest tests from real decisions
 ```
 
 `report --fail-under` and `lint` both exit non-zero on failure, so they work as
@@ -384,14 +384,14 @@ uv sync --extra all
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src/charter
+uv run mypy src/chokepoint
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and
 CI enforces it — see `CONTRIBUTING.md`.
 
 Docs are published at
-[pedromuracchini.github.io/charter](https://pedromuracchini.github.io/charter/),
+[pedromuracchini.github.io/chokepoint](https://pedromuracchini.github.io/chokepoint/),
 assembled from this repository's markdown plus an API reference generated from
 the package's own docstrings:
 

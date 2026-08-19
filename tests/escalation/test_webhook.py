@@ -5,15 +5,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from charter._scope import ExecutionScope
-from charter.core.context import GuardContext
-from charter.core.escalation import register_handler
-from charter.core.policy_set import PolicySet
-from charter.decisions import ESCALATE, GuardBlocked, RuleResult
-from charter.escalation.webhook import WebhookEscalationHandler
+from chokepoint._scope import ExecutionScope
+from chokepoint.core.context import GuardContext
+from chokepoint.core.escalation import register_handler
+from chokepoint.core.policy_set import PolicySet
+from chokepoint.decisions import ESCALATE, GuardBlocked, RuleResult
+from chokepoint.escalation.webhook import WebhookEscalationHandler
 
 _URL = "https://example.invalid/approve"
-_URLOPEN = "charter.escalation.webhook.urllib.request.urlopen"
+_URLOPEN = "chokepoint.escalation.webhook.urllib.request.urlopen"
 
 
 def _ctx(**args):
@@ -150,8 +150,8 @@ def test_end_to_end_through_evaluate_call(local_approval_server):
         timeout_s=5,
     )
 
-    from charter._engine import evaluate_call
-    from charter._scope import current_scope
+    from chokepoint._engine import evaluate_call
+    from chokepoint._scope import current_scope
 
     result = evaluate_call(
         tool_name="transfer_funds",

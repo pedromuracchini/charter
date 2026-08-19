@@ -1,7 +1,7 @@
 """End-to-end example mirroring the framework's clinical-agent scenario.
 
-Demonstrates: PolicySet, AgentScopedPolicy, ReversibleAction, CharterRegistry,
-and per-agent CharterInterceptor instances enforcing different access for a
+Demonstrates: PolicySet, AgentScopedPolicy, ReversibleAction, ChokepointRegistry,
+and per-agent ChokepointInterceptor instances enforcing different access for a
 clinical agent (a licensed physician) and a support agent — the same tool is
 shared between both agents, and the *interceptor* (carrying agent identity)
 decides what each is allowed to do with it.
@@ -13,24 +13,24 @@ Run directly to see the enforcement in action:
 Or inspect it with the CLI (this module follows the `POLICIES` / `REGISTRY` /
 `TOOL_NAMES` convention the CLI expects):
 
-    uv run charter report --agent examples/clinical.py
-    uv run charter lint examples/clinical.py
+    uv run chokepoint report --agent examples/clinical.py
+    uv run chokepoint lint examples/clinical.py
 """
 
 from __future__ import annotations
 
-from charter import (
+from chokepoint import (
     BLOCK,
     AgentScopedPolicy,
-    CharterInterceptor,
-    CharterRegistry,
+    ChokepointInterceptor,
+    ChokepointRegistry,
     GuardBlocked,
     PolicySet,
     ReversibleAction,
 )
 
 # 1. Register agents and their roles.
-REGISTRY = CharterRegistry()
+REGISTRY = ChokepointRegistry()
 REGISTRY.register("clinical_agent", role="licensed_physician")
 REGISTRY.register("support_agent", role="support_staff")
 
@@ -101,10 +101,10 @@ delete_patient = ReversibleAction(
 
 
 def main() -> None:
-    clinical_interceptor = CharterInterceptor(
+    clinical_interceptor = ChokepointInterceptor(
         registry=REGISTRY, agent_id="clinical_agent", policies=POLICIES, mode="enforce"
     )
-    support_interceptor = CharterInterceptor(
+    support_interceptor = ChokepointInterceptor(
         registry=REGISTRY, agent_id="support_agent", policies=POLICIES, mode="enforce"
     )
 

@@ -11,7 +11,7 @@ Run directly:
 
 from __future__ import annotations
 
-from charter import ESCALATE, EscalationHandler, GuardBlocked, guard, register_handler
+from chokepoint import ESCALATE, EscalationHandler, GuardBlocked, guard, register_handler
 
 
 class SlackApprovalHandler(EscalationHandler):

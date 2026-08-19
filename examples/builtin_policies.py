@@ -1,4 +1,4 @@
-"""The `charter.policies` library: the rules every agent needs, prebuilt.
+"""The `chokepoint.policies` library: the rules every agent needs, prebuilt.
 
 Each one is an ordinary `PolicySet`, so they compose with `&`/`|`/`~` and mix
 freely with policies you write yourself. Scope them with `tool_names` — a
@@ -14,8 +14,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from charter import CharterInterceptor, GuardBlocked
-from charter.policies import (
+from chokepoint import ChokepointInterceptor, GuardBlocked
+from chokepoint.policies import (
     budget_policy,
     domain_allowlist,
     no_destructive_shell,
@@ -26,10 +26,10 @@ from charter.policies import (
     token_budget_policy,
 )
 
-WORKSPACE = Path(tempfile.mkdtemp(prefix="charter-workspace-"))
+WORKSPACE = Path(tempfile.mkdtemp(prefix="chokepoint-workspace-"))
 
 
-# --- the tools. None of them knows Charter exists. ------------------------
+# --- the tools. None of them knows Chokepoint exists. ------------------------
 
 
 def run_sql(query: str) -> dict:
@@ -61,8 +61,8 @@ def call_llm(prompt: str) -> dict:
     return {"text": "...", "usage": {"input_tokens": 200_000, "output_tokens": 20_000}}
 
 
-def build_interceptor() -> CharterInterceptor:
-    return CharterInterceptor(
+def build_interceptor() -> ChokepointInterceptor:
+    return ChokepointInterceptor(
         agent_id="ops_agent",
         policies=[
             # Credentials must never leave in a tool argument. Unscoped on
@@ -84,7 +84,7 @@ def build_interceptor() -> CharterInterceptor:
     )
 
 
-def attempt(interceptor: CharterInterceptor, label: str, tool, **kwargs) -> None:
+def attempt(interceptor: ChokepointInterceptor, label: str, tool, **kwargs) -> None:
     try:
         interceptor.call(tool.__name__, tool, **kwargs)
         print(f"  allowed  {label}")
@@ -138,7 +138,7 @@ def main() -> None:
 
     print("\n=== rate limit (3 per session) ===")
     for i in range(1, 5):
-        attempt(interceptor, f"search #{i}", search, query="charter")
+        attempt(interceptor, f"search #{i}", search, query="chokepoint")
 
     print("\n=== budget (100 per session) ===")
     attempt(interceptor, "transfer 60", transfer, amount=60.0, to="alice")
@@ -153,7 +153,7 @@ def main() -> None:
     print("    priced before it is made, so this is 'stop once spent', not 'never exceed'.")
 
     print("\n=== a fresh session starts clean ===")
-    interceptor.call("search", search, session_id="another", query="charter")
+    interceptor.call("search", search, session_id="another", query="chokepoint")
     print("  allowed  search in a different session, despite the first being exhausted")
 
 
